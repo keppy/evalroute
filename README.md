@@ -185,7 +185,7 @@ First three lanes measured with this harness via the Nous inference API — 10 t
 | DL / ML research engineering | glm-5.3 @ high | 1.00 | $0.0024 | "GLM 5.3 ≈ K3, vendors disagree" resolved: GLM 5.3 on cost (K3 slightly higher raw pass, ~3x the price; its @medium arm also dropped coverage to 0.90) |
 | Alignment reasoning | glm-5.3 @ medium | 1.00 | $0.0119 | Ceiling effect — all four arms 100%, cost decided. A harder set is needed before quality gaps are detectable |
 
-Two caveats the reports carry in their provenance stamps: every winner was statistically indistinguishable from its runner-up at n=10 (McNemar, via gonogo), so these are cost decisions on tied arms, not quality claims; and the alignment set is too easy to detect quality differences. Runs and reports live in `examples/artifacts/tier-a-*/`; the measured route table itself is in [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute)'s `data/routes.yaml`.
+Two caveats the reports carry in their provenance stamps: every winner was statistically indistinguishable from its runner-up at n=10 (McNemar, via gonogo), so these are cost decisions on tied arms, not quality claims; and the alignment set is too easy to detect quality differences. The harness, these tasksets, and the raw runs are vendored in [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute) (`harness/evalroute.py`, `examples/artifacts/tier-a-*/`) — that repo is the public home of the whole loop; the measured route table itself is its `data/routes.yaml`.
 
 ## Known limitations
 
