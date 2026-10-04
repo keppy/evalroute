@@ -22,6 +22,40 @@
   drift findings. Absent inputs downgrade to one-line notes. Registered in
   `cli.setup_cli`, so both `evalroute report` and `hermes evalroute report`
   work.
+- `dispatch --runner <name|template>` (env `EVALROUTE_RUNNER`): spawn the
+  worker through any agent CLI. A template carries `{model} {effort}
+  {provider} {brief} {brief_text} {indir}` placeholders, substituted into
+  already-split tokens so spaces/quotes in paths survive; `{effort}` and
+  `{indir}` may be omitted (the card still records the routed effort and the
+  rate line still carries `--effort`). Named runners: `hermes` (default,
+  unchanged argv); other CLIs get unverified sketches in `docs/runners.md`
+  until their real `--help` has been read. Unknown name exits 2 with the
+  list. `EVALROUTE_HERMES_BIN` still works.
+- Dispatch sidecar: every dispatch (real or `--dry-run`) appends a run
+  record — route_id, lane, model, effort, provider, runner, brief, indir,
+  started/ended, duration_s, exit, session_id, report, rate_line — to
+  `<brief>.dispatch.json` (newest last under `"runs"`). `report` reads
+  sidecars (`**/*.dispatch.json` under `--trains`) as the primary
+  brief↔route↔session source, falling back to the README dispatch log and
+  the report's `session:` line — so the Sessions section now populates on
+  real dispatches.
+- `--json` on rate, sync, dispatch, and report. `rate --json` →
+  `{logged, verdict, route_id, lane, model, effort, arm_attribution, message}`;
+  `sync --json` → `{active, sha, path, lanes, measured}` (status/sync/clear);
+  `dispatch --json` → the sidecar object on stdout (card still on stderr);
+  `report --json` → the report's computed data model instead of writing HTML.
+  Human output is byte-identical when `--json` is absent.
+- `EVALROUTE_HOME`: first-priority home env var in `paths.hermes_home()`, so
+  non-Hermes users have a non-Hermes name; `HERMES_HOME` still honoured.
+- `docs/runners.md` (verified vs sketch runner templates) and root
+  `llms.txt` (llmstxt.org shape).
+
+### Changed
+
+- README reordered agent-first: the five-command loop and the `--json`
+  output shape are the first screen; route table, classification, facets,
+  flywheel, dataset/sync follow; "Where the line is" states the Hermes /
+  evalroute UI boundary.
 
 ## [0.6.0] - 2026-10-03
 

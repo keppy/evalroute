@@ -1,16 +1,47 @@
 # evalroute
 
 Route a task to the right **(model, reasoning effort) arm** before you start.
-evalroute is a Python package built around the evalroute procedure — a harness
-that measures **cost per verified success** per task lane (`evalroute/harness/
-tier_a.py`: measure, then serve the results) — and turns that output into a
-route table with provenance on every row: pick the lane, pick the model, pick
-the effort, as data.
+evalroute is a Python package: it classifies the task, prints the arm, and
+labels outcomes so the table improves from real work.
 
-The Hermes plugin is a thin adapter over this package, at
-`keppy/hermes-plugin-evalroute` (`/route`, the `evalroute_route` tool, the
-first-turn sniff, and the bundled skill live there; the routing core lives
-here).
+Honest size check: three lanes are **measured** (n=10 each; arms tied at
+p=1.0) and six are **priors** from public benchmarks — not our runs. The pipe
+is real, the table is small, your outcomes grow it.
+
+## For agent harnesses
+
+If you are a coding agent (Claude Code, Codex, Cursor, OpenHands) arriving
+from a talk QR code, the whole loop is five commands — see `AGENTS.md` for the
+full contract and rules:
+
+```bash
+pip install evalroute
+evalroute route --json "fix the failing test in tests/test_x.py"
+```
+
+```json
+{"lane": "routine-coding", "model": "z-ai/glm-5.3-flash", "effort": "medium",
+ "route_id": "a1b2c3d4", "provider": "nous", "confidence": 1.0,
+ "classification_method": "rules-strong", "provenance": "measured ...",
+ "table": "routes: bundled (9 lanes)", "card": "..."}
+```
+
+```bash
+# ... run the task on that arm, your own way ...
+evalroute rate pass --route-id a1b2c3d4 --model z-ai/glm-5.3-flash \
+    --effort medium --note "tests green" --json
+```
+
+Every verb speaks `--json` (`route`, `rate`, `sync`, `dispatch`, `report`);
+human output is unchanged without it. `table:` provenance values:
+`measured` (controlled runs — prefer these lanes), `observed`
+(same-maintainer workflow labels — a hint), `priors` (vendor benchmarks — a
+hint, not a result).
+
+Sub-tasks can be dispatched to a worker on the routed arm:
+`evalroute dispatch brief.md --runner <name-or-template>` — Hermes is the
+default runner; any agent CLI works via a template (see
+[docs/runners.md](docs/runners.md)).
 
 ## Install
 
@@ -19,7 +50,7 @@ pip install evalroute          # runtime: pyyaml only
 pip install "evalroute[hub]"   # + huggingface_hub, for `sync`
 ```
 
-## Standalone CLI
+## CLI
 
 The same argparse tree the plugin registers, standalone and byte-identical in
 output to `hermes evalroute ...`:
@@ -27,16 +58,44 @@ output to `hermes evalroute ...`:
 ```bash
 evalroute route --lane routine-coding "fix the failing test"   # route card
 evalroute route --json "read this 80-page spec and summarize"  # JSON envelope
-evalroute dispatch brief.md          # route a brief, spawn hermes chat on that arm,
-                                     # print the rate line (--dry-run prints the argv)
-evalroute sync --status              # which route table is active
 evalroute rate pass --note "why"     # label the last routed task
+evalroute sync --status              # which route table is active
 evalroute install-routes --dry-run   # route table -> agent.reasoning_overrides
 ```
 
-Works with no Hermes installed: the Hermes home falls back to `HERMES_HOME`
-or `~/.hermes`, and the ledger, dataset pins, and effort-override reads all
-honor it.
+Works with no Hermes installed: the home resolves `$EVALROUTE_HOME`, then
+`$HERMES_HOME`, then `~/.hermes`; the ledger, dataset pins, and
+effort-override reads all honor it.
+
+## Dispatch (with runners)
+
+```bash
+evalroute dispatch brief.md          # route a brief, spawn a worker on that arm,
+                                     # print the rate line (--dry-run prints the argv)
+evalroute dispatch brief.md --dry-run --json    # the dispatch sidecar object
+```
+
+`--runner` selects who executes the brief: a named runner (`hermes` is the
+only built-in; its flags are this repo's own spawn path) or a template with
+placeholders `{model} {effort} {provider} {brief} {brief_text} {indir}` —
+substituted into already-split tokens, so spaces and quotes in paths survive:
+
+```bash
+evalroute dispatch brief.md --runner "claude -p --model {model} {brief_text}"
+```
+
+Templates may omit `{effort}`: the card still records the routed effort and
+the rate line still carries `--effort`. Runner templates for claude, codex,
+and aider live in [docs/runners.md](docs/runners.md) as **unverified
+sketches** — only `hermes` has been checked against real flags. `dispatch`
+never rates its own work: it prints the rate line for a second agent or human
+(the judge must not be the worker).
+
+Every dispatch (including `--dry-run`) appends a run record to
+`<brief>.dispatch.json` — route id, arm, runner, exit, session id, report
+path, rate line — which `report` reads as the primary brief↔route↔session
+source. `dispatch --json` prints exactly that record on stdout; the card goes
+to stderr either way, and human stdout stays three lines without `--json`.
 
 ## Watch it run
 
@@ -53,26 +112,16 @@ evalroute report --trains docs/trains --open   # one static HTML page: pending
 `--follow` never touches stdout's three-line contract, the exit code, or the
 report file; `evalroute report` is read-only over the ledger, `state.db`,
 and the trains dir, and writes one self-contained HTML file.
+`evalroute report --json` prints the computed data model — the
+machine-readable factory status — instead of writing HTML.
 
-## The nine-name contract
+**Where the line is.** Hermes's UI shows Hermes things (transcripts,
+sessions); evalroute's report shows evalroute things (routes, arms, outcomes,
+cost). Neither embeds the other. The only Hermes touchpoints in the library
+are `hermes_home()` (a path), the LLM facade seam, and read-only `state.db`
+for `--follow` and the report.
 
-The plugin adapter relies on exactly these names; everything else in the
-package is private to the library (see `evalroute/contract.py`,
-`CONTRACT_VERSION = 1`):
-
-| contract name | module | what it is |
-| --- | --- | --- |
-| `routing.set_llm_facade` | `evalroute/routing.py` | stash the host LLM facade; `None` disables the fallback |
-| `routing.evalroute_route` | `evalroute/routing.py` | tool handler (`evalroute_route`) |
-| `routing.handle_route_command` | `evalroute/routing.py` | `/route` slash command |
-| `cli.setup_cli` | `evalroute/cli.py` | argparse wiring (`register_cli_command` setup_fn) |
-| `cli.evalroute_cli` | `evalroute/cli.py` | CLI handler |
-| `flywheel.handle_rate` | `evalroute/flywheel.py` | `/rate` pass\|fail\|skip |
-| `flywheel.on_pre_command` | `evalroute/flywheel.py` | `/model` + `/reasoning` observer |
-| `flywheel.on_post_llm_call` | `evalroute/flywheel.py` | last-seen-model diagnostic |
-| `schemas.EVALROUTE_ROUTE` | `evalroute/schemas.py` | tool schema |
-
-## The route table
+## Route table
 
 `evalroute/data/routes.yaml` — one row per lane: `id`, `keywords` (the rule
 layer), `model`, `effort`, `escalation`, `provenance`, `notes`. Lane taxonomy
@@ -86,25 +135,30 @@ many vendor-run). Three lanes now have small measured batches; the others
 remain marked `priors`. Replace those rows only after your own controlled
 data, and keep each row's `provenance` visible.
 
-### Route table: bundled or synced
+### What the harness measures
 
-The table you route against is either the bundled one or a pinned dataset
-revision; the card says which. The dataset is fetched only when you run
-`sync` (never on install, never while routing), it is pinned to a resolved
-revision, and the library routes fully offline without it:
+Three lanes measured with the evalroute harness via the Nous inference API —
+10 tasks x 3 samples per arm (four routine-coding, five DL/ML, five
+alignment arms, of which only four alignment arms have graded samples: 119
+graded, 30 judge-pending, and one missing cell). Raw API and judge cost in
+the vendored rows totals **$3.0590051**, excluding verification time across
+routine coding, DL/ML research engineering, and alignment reasoning. Every
+winner was statistically indistinguishable from its runner-up at n=10
+(McNemar, via gonogo) — the empirical paired gap is zero, but the
+conservative interval spans [-33.4%, +33.4%]; $p=1$ is not a population
+equivalence test. All-coverage lanes have a ceiling on this taskset; the
+routes choose cost among observed ties, not quality parity. The alignment
+judge has no blind checker audit; its 30 pending Qwen outputs are excluded
+from the route comparison. No quality claim spans that arm. The historical
+v1 run records omit model IDs; the arm-name-to-ID mapping is the vendored
+`models.json`, not an ID echoed by those records. Routine coding overturned
+the priors' vendor pick: glm-5.3-flash at medium effort covered every task
+at $0.00005/success, 2.4–3.9x cheaper than the V4.1 Flash arms at equal
+coverage.
 
-```bash
-evalroute sync --revision <sha>   # pin the published table (default: main)
-evalroute sync --status           # bundled, or dataset @ <sha>
-evalroute sync --clear            # back to the bundled table
-```
-
-`sync` downloads only the `routes/` config of
-[keppy/evalroute-flywheel](https://huggingface.co/datasets/keppy/evalroute-flywheel)
-into `<hermes home>/evalroute/dataset/<sha>/` — never the measured evidence
-(grows over time; leave it on the Hub). It needs `pip install
-huggingface_hub` (the `hub` extra). Routing data lands only under the Hermes
-home, like the ledger.
+Every row is `priors`, `observed`, or `measured`. Nothing hypothesis-shaped
+masquerades as a result — the card prints the row's provenance verbatim,
+statistical stamp included.
 
 ### Regenerating from measured data
 
@@ -221,7 +275,7 @@ The controlled harness is not the only source of data. As you route in daily
 sessions, the library quietly builds an observational dataset:
 
 - **`route`** logs the assignment (lane, recommended arm, method,
-  confidence, facets) to `<hermes home>/evalroute/labels.jsonl` — the
+  confidence, facets) to `<home>/evalroute/labels.jsonl` — the
   task text you typed is the label.
 - **`/model` or `/reasoning` after a route** logs a process-global switch
   observation. Without a session join it is not a verified route rejection
@@ -239,7 +293,7 @@ The ledger therefore holds two row qualities: an **observed arm** (a
 not proof) and a **caller-stated arm** (`evalroute dispatch <brief.md>`
 records the spawn arguments as `arm_attribution: explicit_user` on the
 outcome row). `dispatch` is the one-line form of the flywheel: route the
-brief, spawn `hermes chat` on exactly that arm, print the `rate it:` line —
+brief, spawn a worker on exactly that arm, print the `rate it:` line —
 it still never auto-rates `pass`.
 
 The ledger is **profile-wide**, not session-scoped: command hooks do not
@@ -299,30 +353,25 @@ not check raw labels into a public repo. Task text and notes can expose
 paths and private project details even without response bodies. Do not claim
 retroactive erasure for any label data once shared.
 
-## What the harness measures
+## Dataset/sync
 
-Three lanes measured with the evalroute harness via the Nous inference API —
-10 tasks x 3 samples per arm (four routine-coding, five DL/ML, five
-alignment arms, of which only four alignment arms have graded samples: 119
-graded, 30 judge-pending, and one missing cell). Raw API and judge cost in
-the vendored rows totals **$3.0590051**, excluding verification time across
-routine coding, DL/ML research engineering, and alignment reasoning. Every
-winner was statistically indistinguishable from its runner-up at n=10
-(McNemar, via gonogo) — the empirical paired gap is zero, but the
-conservative interval spans [-33.4%, +33.4%]; $p=1$ is not a population
-equivalence test. All-coverage lanes have a ceiling on this taskset; the
-routes choose cost among observed ties, not quality parity. The alignment
-judge has no blind checker audit; its 30 pending Qwen outputs are excluded
-from the route comparison. No quality claim spans that arm. The historical
-v1 run records omit model IDs; the arm-name-to-ID mapping is the vendored
-`models.json`, not an ID echoed by those records. Routine coding overturned
-the priors' vendor pick: glm-5.3-flash at medium effort covered every task
-at $0.00005/success, 2.4–3.9x cheaper than the V4.1 Flash arms at equal
-coverage.
+The table you route against is either the bundled one or a pinned dataset
+revision; the card says which. The dataset is fetched only when you run
+`sync` (never on install, never while routing), it is pinned to a resolved
+revision, and the library routes fully offline without it:
 
-Every row is `priors`, `observed`, or `measured`. Nothing hypothesis-shaped
-masquerades as a result — the card prints the row's provenance verbatim,
-statistical stamp included.
+```bash
+evalroute sync --revision <sha>   # pin the published table (default: main)
+evalroute sync --status           # bundled, or dataset @ <sha>
+evalroute sync --clear            # back to the bundled table
+evalroute sync --status --json    # {"active", "sha", "path", "lanes", "measured"}
+```
+
+`sync` downloads only the `routes/` config of
+[keppy/evalroute-flywheel](https://huggingface.co/datasets/keppy/evalroute-flywheel)
+into `<home>/evalroute/dataset/<sha>/` — never the measured evidence
+(grows over time; leave it on the Hub). It needs `pip install
+huggingface_hub` (the `hub` extra).
 
 ## Known limitations
 
@@ -331,8 +380,8 @@ statistical stamp included.
   quality tracks whatever model the host is on; it costs one small
   structured call (temp 0, 256 tokens) only when rules are weak.
 - **The library cannot switch the model for you.** `route` prints the card;
-  you run `/model <id>`. Run it before turn 1 — mid-session switches re-read
-  the whole context at full input price.
+  you run the task on that arm. Run it before turn 1 — mid-session switches
+  re-read the whole context at full input price.
 - **One effort slot per model id** (`agent.reasoning_overrides`); when a
   model serves two lanes, `install-routes` keeps the higher effort. A
   lower-effort lane's card explicitly prints `/reasoning <lane-effort>`
@@ -351,3 +400,26 @@ statistical stamp included.
 - **`install-routes` needs the Hermes config module to write.** Standalone,
   writing `agent.reasoning_overrides` works inside the `hermes` process;
   `--dry-run` works anywhere.
+- **Named runners are `hermes` only.** Other agent CLIs get templates in
+  `docs/runners.md`; a sketch is unverified flags until someone reads the
+  CLI's real `--help`.
+
+## Hermes plugin
+
+The Hermes plugin is a thin adapter over this package, at
+`keppy/hermes-plugin-evalroute` (`/route`, `/rate`, the `evalroute_route`
+tool, the first-turn sniff, and the bundled skill live there; the routing
+core lives here). It relies on exactly the nine contract names in
+`evalroute/contract.py` (`CONTRACT_VERSION = 1`): `routing.set_llm_facade`,
+`routing.evalroute_route`, `routing.handle_route_command`, `cli.setup_cli`,
+`cli.evalroute_cli`, `flywheel.handle_rate`, `flywheel.on_pre_command`,
+`flywheel.on_post_llm_call`, `schemas.EVALROUTE_ROUTE`.
+
+## Roadmap
+
+- `contribute`: opt-in sharing of measured/observed rows back to the
+  published dataset (never your raw ledger).
+- Pooled observed rows: aggregating opt-in observational labels with honest
+  provenance and gonogo verdicts.
+- Classifier fine-tune: replacing the keyword+LLM-fallback layers with a
+  small trained classifier once the labeled corpus earns it.

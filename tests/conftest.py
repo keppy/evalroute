@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 def isolated_hermes_home(tmp_path, monkeypatch):
     """No test may read or write the user's live profile or labels."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.delenv("EVALROUTE_HOME", raising=False)  # first-priority; must not leak in
     from evalroute import flywheel
     flywheel._MEMORY.clear()
     from evalroute import routing
