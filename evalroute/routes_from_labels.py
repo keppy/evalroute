@@ -191,7 +191,7 @@ def aggregate_contributed(rows: list[dict[str, Any]],
     weeks: list[str] = []
     lanes: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: dict(attempts=0, passes=0,
                                                    fails=0, escalations=0)))
-    dropped = {"stale": 0, "unknown_arm": 0}
+    dropped = {"stale": 0, "unknown_arm": 0, "no_explicit_arm": 0}
     for row in rows:
         if row.get("kind") != "outcome" or row.get("rated") not in ("pass", "fail"):
             continue
@@ -206,18 +206,19 @@ def aggregate_contributed(rows: list[dict[str, Any]],
             continue
         weeks.append(row["week"])
         lane = row.get("route_lane") or "(unknown)"
-        if (row.get("arm_attribution") == "explicit_user"
-                and row.get("actual_model") and row.get("actual_effort")
-                and (known_models is None or row["actual_model"] in known_models)):
-            arm_key = f'{row["actual_model"]}@{row["actual_effort"]}'
-        else:
-            if row.get("actual_model") and known_models is not None \
-                    and row["actual_model"] not in known_models:
-                dropped["unknown_arm"] += 1
-            arm_key = f'{row.get("route_model") or "?"}@{row.get("route_effort") or "?"}'
-            if known_models is not None and not str(row.get("route_model") or "") in known_models:
-                arm_key = "?@?"
-                dropped["unknown_arm"] += 1
+        # Pooled evidence is only ever credited to the arm the contributor says
+        # they actually ran. A row without a known, explicit actual arm is
+        # dropped and counted — never re-attributed to the routed arm, which
+        # would turn "I ran something else and it passed" into a pass for the
+        # route's model.
+        if not (row.get("arm_attribution") == "explicit_user"
+                and row.get("actual_model") and row.get("actual_effort")):
+            dropped["no_explicit_arm"] += 1
+            continue
+        if known_models is not None and row["actual_model"] not in known_models:
+            dropped["unknown_arm"] += 1
+            continue
+        arm_key = f'{row["actual_model"]}@{row["actual_effort"]}'
         arm = lanes[lane][arm_key]
         arm["attempts"] += 1
         if row.get("rated") == "pass":
@@ -263,25 +264,33 @@ def merge_contributed(routes_path: Path, rows: list[dict[str, Any]]) -> tuple[li
         prev = existing[lane_id]
         if str(prev.get("provenance", "")).startswith("measured"):
             out.append(dict(prev))  # observed cannot overwrite measured
-        else:
-            row = dict(prev)
-            n = lstats["outcomes"]
-            pr = lstats["pass_rate"]
-            weeks = stats["weeks"]
-            span = f" ({weeks[0]}..{weeks[-1]})" if weeks else ""
-            row["provenance"] = (f"observed {n} tasks across {k} contributors, single-arm, "
-                                 f"pass {pr:.0%}{span}, {date}; not independent trials "
-                                 "or a controlled comparison")
-            try:
-                from . import adjudicate
-            except ImportError:
-                import adjudicate  # type: ignore
-            passes = sum(a["passes"] for a in lstats["arms"].values())
-            verdict = adjudicate.observed_verdict(passes, n)
-            if verdict:
-                row["provenance"] = f'{row["provenance"]}; {verdict}'
-            out.append(row)
-            applied += 1
+            seen.add(lane_id)
+            continue
+        # Only evidence on the lane's *own* arm may speak for the lane. Rows on
+        # other arms stay visible in the stats but never become this row's
+        # "single-arm, pass R%" — a gpt-5 pass is not evidence about glm.
+        own = lstats["arms"].get(f'{prev.get("model")}@{prev.get("effort")}')
+        if not own or own["attempts"] == 0:
+            out.append(dict(prev))
+            seen.add(lane_id)
+            continue
+        row = dict(prev)
+        n = own["attempts"]
+        pr = own["passes"] / n
+        weeks = stats["weeks"]
+        span = f" ({weeks[0]}..{weeks[-1]})" if weeks else ""
+        row["provenance"] = (f"observed {n} tasks across {k} contributors, single-arm, "
+                             f"pass {pr:.0%}{span}, {date}; not independent trials "
+                             "or a controlled comparison")
+        try:
+            from . import adjudicate
+        except ImportError:
+            import adjudicate  # type: ignore
+        verdict = adjudicate.observed_verdict(own["passes"], n)
+        if verdict:
+            row["provenance"] = f'{row["provenance"]}; {verdict}'
+        out.append(row)
+        applied += 1
         seen.add(lane_id)
     for lane_id, prev in existing.items():
         if lane_id not in seen:

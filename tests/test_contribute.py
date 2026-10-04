@@ -302,8 +302,28 @@ def test_aggregate_contributed_shape(home):
         r["_contributor"] = "a" if i % 2 == 0 else "b"
     stats = rfl.aggregate_contributed(rows)
     assert stats["n_contributors"] == 2
-    assert stats["outcomes"] == len([r for r in rows if r["rated"] in ("pass", "fail")])
+    explicit = [r for r in rows if r["rated"] in ("pass", "fail")
+                and r["arm_attribution"] == "explicit_user"]
+    unattributed = [r for r in rows if r["rated"] in ("pass", "fail")
+                    and r["arm_attribution"] != "explicit_user"]
+    # Only rows with an explicit actual arm count; the rest are dropped and counted,
+    # never re-attributed to the routed arm.
+    assert stats["outcomes"] == len(explicit)
+    assert stats["dropped"]["no_explicit_arm"] == len(unattributed) > 0
     assert "dl-ml-research-engineering" in stats["lanes"]
+    assert set(stats["lanes"]["dl-ml-research-engineering"]["arms"]) == {"openai/gpt-5@high"}
+
+
+def test_aggregate_contributed_unknown_model_dropped_not_reattributed(home):
+    rows = [{"kind": "outcome", "route_lane": "routine-coding", "route_model": "z-ai/glm-5.3-flash",
+             "route_effort": "medium", "actual_model": "evil/made-up-model", "actual_effort": "max",
+             "arm_attribution": "explicit_user", "method": "rules-strong", "confidence": 1.0,
+             "rated": "pass", "week": "2026-W40", "task_hash": "0" * 64, "corrected": False,
+             "schema": 1, "_contributor": "evil"}]
+    stats = rfl.aggregate_contributed(rows, known_models={"z-ai/glm-5.3-flash"})
+    assert stats["outcomes"] == 0
+    assert stats["dropped"]["unknown_arm"] == 1
+    assert stats["lanes"] == {}
 
 
 def test_aggregate_contributed_stale_week_dropped(home):
@@ -369,13 +389,35 @@ def test_merge_invariant(home, tmp_path):
     # measured lane byte-identical
     original = yaml.safe_load(ROUTES)["lanes"][0]
     assert by_id["routine-coding"] == original
-    # no unknown model anywhere
+    # no unknown model anywhere, no minted lane
+    assert set(by_id) == {"routine-coding", "dl-ml-research-engineering"}
     for lane in lanes:
         assert lane.get("model") != "evil/made-up-model"
-        if lane["id"] == "dl-ml-research-engineering":
-            assert lane["provenance"].startswith(
-                f"observed across {stats_k(rows)} contributors") or "observed" in lane["provenance"]
-    assert applied == 1  # only the priors lane contested
+    # The priors lane's only honest rows ran gpt-5, not the lane's own glm-5.3@high
+    # arm, so nothing may speak for the lane: it stays priors, untouched.
+    assert by_id["dl-ml-research-engineering"] == yaml.safe_load(ROUTES)["lanes"][1]
+    assert applied == 0
+
+
+def test_merge_contributed_own_arm_only(home, tmp_path):
+    """Pass rate on a contested lane counts only outcomes on the lane's own arm."""
+    routes = tmp_path / "routes.yaml"
+    routes.write_text(ROUTES, encoding="utf-8")
+    def row(model, effort, rated, who):
+        return {"kind": "outcome", "route_lane": "dl-ml-research-engineering",
+                "route_model": "z-ai/glm-5.3", "route_effort": "high",
+                "actual_model": model, "actual_effort": effort, "arm_attribution": "explicit_user",
+                "method": "rules-strong", "confidence": 1.0, "rated": rated, "week": "2026-W40",
+                "task_hash": "0" * 64, "corrected": False, "schema": 1, "_contributor": who}
+    rows = [row("z-ai/glm-5.3", "high", "pass", "a"), row("z-ai/glm-5.3", "high", "fail", "b"),
+            row("z-ai/glm-5.3-flash", "medium", "pass", "a"), row("z-ai/glm-5.3-flash", "medium", "pass", "b"),
+            row("z-ai/glm-5.3-flash", "medium", "pass", "b")]
+    lanes, applied = rfl.merge_contributed(routes, rows)
+    lane = {l["id"]: l for l in lanes}["dl-ml-research-engineering"]
+    assert applied == 1
+    # 2 own-arm outcomes, 1 pass -> 50%; the three flash passes do not inflate it
+    assert lane["provenance"].startswith("observed 2 tasks across 2 contributors, single-arm, pass 50%")
+    assert lane["model"] == "z-ai/glm-5.3" and lane["effort"] == "high"
 
 
 def stats_k(rows):
@@ -483,4 +525,5 @@ def test_contributed_dir_option(home, tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "across 2 contributors" in out
-    assert "1 pooled observed rows applied" in out
+    # fixture rows ran gpt-5 on the priors lane -> nothing speaks for its own arm
+    assert "0 pooled observed rows applied" in out
