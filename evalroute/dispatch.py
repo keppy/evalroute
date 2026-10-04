@@ -178,6 +178,20 @@ def _latest_run(sidecar: Path) -> dict[str, Any] | None:
     return None
 
 
+def _child_env() -> dict[str, str]:
+    """Environment for the worker: the parent's, minus approval bypasses.
+
+    Hermes carries ``--yolo`` in ``HERMES_YOLO_MODE``; a dispatched worker
+    must not inherit it (catalog rule 12 — a child must never be an
+    approval-free agent because of how its parent was launched). The worker's
+    approvals follow its own ``approvals.single_query_mode``, default deny.
+    """
+    env = dict(os.environ)
+    for key in ("HERMES_YOLO_MODE",):
+        env.pop(key, None)
+    return env
+
+
 def _spawn(argv: list[str], out_path: Path, timeout: float | None) -> tuple[int, str]:
     """Run the child; stdout -> report, stderr -> log. Returns (code, stderr text)."""
     err_path = out_path.with_suffix(out_path.suffix + ".stderr.log")
@@ -187,10 +201,12 @@ def _spawn(argv: list[str], out_path: Path, timeout: float | None) -> tuple[int,
             if os.name == "nt":
                 proc = subprocess.Popen(
                     argv, stdout=out_f, stderr=err_f, stdin=subprocess.DEVNULL,
+                    env=_child_env(),
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
             else:
                 proc = subprocess.Popen(
                     argv, stdout=out_f, stderr=err_f, stdin=subprocess.DEVNULL,
+                    env=_child_env(),
                     start_new_session=True)
         except FileNotFoundError as exc:
             err_f.write(str(exc))
@@ -349,10 +365,12 @@ def _spawn_follow(argv: list[str], out_path: Path, timeout: float | None,
             if os.name == "nt":
                 proc = subprocess.Popen(
                     argv, stdout=out_f, stderr=err_f, stdin=subprocess.DEVNULL,
+                    env=_child_env(),
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
             else:
                 proc = subprocess.Popen(
                     argv, stdout=out_f, stderr=err_f, stdin=subprocess.DEVNULL,
+                    env=_child_env(),
                     start_new_session=True)
         except FileNotFoundError as exc:
             err_f.write(str(exc))

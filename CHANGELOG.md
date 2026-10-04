@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.1] - 2026-10-04
+
+### Fixed
+- `dispatch` no longer passes `HERMES_YOLO_MODE` to the worker. A parent launched with `--yolo` handed the child an approval-free agent; the worker's approvals now follow its own `approvals.single_query_mode` (default deny). Found by the Hermes catalog review of hermes-plugin-evalroute #132528.
+
 ## [0.7.0] - 2026-10-04
 
 ### Added
