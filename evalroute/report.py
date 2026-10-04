@@ -281,15 +281,17 @@ def _now_strip(data: dict[str, Any]) -> str:
 
 
 def _now_section(pending: list[dict[str, Any]]) -> str:
+    # `pending` rows are the projection built in _ledger_data (iso/lane/arm/task/age),
+    # not raw ledger records — read those keys, or every row renders "? @ ?".
     rows = []
     for rec in pending:
         rows.append(
             "<tr>"
             f"<td>{_esc(rec.get('iso') or '')}</td>"
             f"<td>{_esc(rec.get('lane') or '?')}</td>"
-            f"<td>{_esc(rec.get('model') or '?')} @ {_esc(rec.get('effort') or '?')}</td>"
+            f"<td>{_esc(rec.get('arm') or '? @ ?')}</td>"
             f"<td class='wrap'>{_esc(rec.get('task'))}</td>"
-            f"<td>{_esc(_age(rec.get('ts')))}</td>"
+            f"<td>{_esc(rec.get('age') or '?')}</td>"
             "</tr>")
     body = "".join(rows) if rows else \
         "<tr><td colspan='5' class='note'>no pending routes — nothing awaits a rating</td></tr>"

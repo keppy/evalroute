@@ -165,3 +165,14 @@ def test_demo_never_touches_flywheel_module_state(demo_home, monkeypatch):
     rc, _ = _run(demo_home)
     assert rc == 0
     assert calls == []
+
+
+def test_now_section_shows_pending_arm_and_age():
+    """Regression: the pending table read raw-record keys (model/effort/ts) off the
+    projected rows (arm/age) and rendered every row as '? @ ?' with age '?'."""
+    from evalroute import report
+    html_text = report._now_section([{"iso": "2026-10-04T00:00:00+00:00", "lane": "routine-coding",
+                                      "arm": "z-ai/glm-5.3-flash @ medium", "task": "fix it", "age": "3h"}])
+    assert "z-ai/glm-5.3-flash @ medium" in html_text
+    assert ">3h<" in html_text
+    assert "? @ ?" not in html_text
