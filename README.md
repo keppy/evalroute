@@ -38,6 +38,22 @@ Works with no Hermes installed: the Hermes home falls back to `HERMES_HOME`
 or `~/.hermes`, and the ledger, dataset pins, and effort-override reads all
 honor it.
 
+## Watch it run
+
+```bash
+evalroute dispatch brief.md --follow        # stream the worker session from
+                                            # state.db to stderr while it runs
+evalroute report --trains docs/trains --open   # one static HTML page: pending
+                                            # routes, rated outcomes, per-lane
+                                            # tally, sessions + train costs,
+                                            # drift findings (add --watch 60 to
+                                            # regenerate every minute)
+```
+
+`--follow` never touches stdout's three-line contract, the exit code, or the
+report file; `evalroute report` is read-only over the ledger, `state.db`,
+and the trains dir, and writes one self-contained HTML file.
+
 ## The nine-name contract
 
 The plugin adapter relies on exactly these names; everything else in the

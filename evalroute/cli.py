@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import dataset, dispatch, flywheel
+from . import dataset, dispatch, flywheel, report
 from .routing import _route_for_args, _tool_result, install_routes
 
 _WORKFLOW_EPILOG = """\
@@ -74,6 +74,17 @@ def setup_cli(subparser) -> None:
                                  "session store to stderr while it runs")
     dispatch_p.add_argument("--dry-run", action="store_true",
                             help="Route and print the argv; spawn nothing")
+    report_p = subs.add_parser("report",
+                               help="Render one static HTML page over the ledger, "
+                                    "sessions, trains, and drift findings")
+    report_p.add_argument("--out", help="Output path (default: <home>/evalroute/report.html)")
+    report_p.add_argument("--open", action="store_true",
+                          help="Open the rendered page in the default browser")
+    report_p.add_argument("--watch", type=float, metavar="SECONDS",
+                          help="Regenerate every SECONDS until Ctrl-C "
+                               "(one stderr line per regen)")
+    report_p.add_argument("--trains", help="Trains dir (default: ./docs/trains if it exists)")
+    report_p.add_argument("--factory-json", help="factory check --json findings to embed")
     subparser.set_defaults(func=evalroute_cli)
 
 
@@ -86,6 +97,8 @@ def evalroute_cli(args) -> int:
         return dispatch.run(args)
     if action == "sync":
         return dataset.run(args)
+    if action == "report":
+        return report.run(args)
     if action == "rate":
         parts = [getattr(args, "verdict", None) or ""]
         if getattr(args, "lane", None):

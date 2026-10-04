@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `dispatch --follow`: after spawning the child, poll the session store
+  (`<hermes home>/state.db`, read-only sqlite URI, 2 s) for the newest
+  session whose `cwd` matches `--in` (or the brief's dir) and `started_at`
+  is at/after spawn time; stream its new `messages` rows to stderr, one
+  line each (`HH:MM:SS  role[/tool]  first 100 chars`). Stdout's three-line
+  contract, the exit code, and the report file are untouched; a missing or
+  locked store prints one stderr line and the loop keeps waiting on the
+  child. `--timeout` still kills the whole tree (exit 124).
+- `evalroute report [--out PATH] [--open] [--watch SECONDS] [--trains DIR]
+  [--factory-json PATH]`: one self-contained static HTML page (stdlib only,
+  no JS, no external assets) over the flywheel ledger (pending routes,
+  user-confirmed outcomes with dispatcher corrections, per-lane per-arm
+  tally with the active table's provenance, classification-method split),
+  the Hermes session store (per-train session costs), the trains dir
+  (brief → report → route id → session links), and `factory check --json`
+  drift findings. Absent inputs downgrade to one-line notes. Registered in
+  `cli.setup_cli`, so both `evalroute report` and `hermes evalroute report`
+  work.
+
 ## [0.6.0] - 2026-10-03
 
 The routing core moved out of `hermes-plugin-evalroute` v0.5.1 into this
