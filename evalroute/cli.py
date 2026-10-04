@@ -59,6 +59,8 @@ def setup_cli(subparser) -> None:
                           help="Show which route table is active; no network")
     status_p.add_argument("--clear", action="store_true",
                           help="Unpin the dataset table; route on the bundled table")
+    status_p.add_argument("--with-contributed", action="store_true",
+                          help="Also download the contributed/ tree (redacted opt-in rows, read-only)")
     status_p.add_argument("--json", action="store_true",
                           help="Print the active-table state as JSON")
     dispatch_p = subs.add_parser("dispatch",
@@ -99,6 +101,17 @@ def setup_cli(subparser) -> None:
                                "(one stderr line per regen)")
     report_p.add_argument("--trains", help="Trains dir (default: ./docs/trains if it exists)")
     report_p.add_argument("--factory-json", help="factory check --json findings to embed")
+    contrib_p = subs.add_parser("contribute",
+                                help="Upload redacted outcome rows to the flywheel dataset "
+                                     "(opt-in; --dry-run first)")
+    contrib_p.add_argument("--dry-run", action="store_true",
+                           help="Print the exact redacted rows that would be uploaded; send nothing")
+    contrib_p.add_argument("--rotate-salt", action="store_true",
+                           help="Regenerate the per-install salt and reset the cursor")
+    contrib_p.add_argument("--repo", default=None,
+                           help="Dataset repo id (default: keppy/evalroute-flywheel)")
+    contrib_p.add_argument("--json", action="store_true",
+                           help="Wrap the dry-run summary + rows in one JSON object")
     subparser.set_defaults(func=evalroute_cli)
 
 
@@ -117,6 +130,12 @@ def evalroute_cli(args) -> int:
         return dispatch.run(args)
     if action == "sync":
         return dataset.run(args)
+    if action == "contribute":
+        from . import contribute
+        return contribute.run(dry_run=bool(getattr(args, "dry_run", False)),
+                              rotate=bool(getattr(args, "rotate_salt", False)),
+                              repo_id=getattr(args, "repo", None) or contribute.REPO_ID,
+                              as_json=bool(getattr(args, "json", False)))
     if action == "report":
         return report.run(args)
     if action == "rate":
