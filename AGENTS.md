@@ -11,7 +11,7 @@ small, your outcomes grow it.
 You do not need Hermes. The whole loop is five commands:
 
 ```bash
-pip install evalroute
+uv tool install evalroute                        # or pip install evalroute
 evalroute route --json "<one-line task>"          # → lane, model, effort, route_id, table
 # run the task on that arm, your own way
 evalroute rate pass --route-id <id> --model <model> --effort <effort> --note "<why>" --json
@@ -80,10 +80,12 @@ actually ran are ever pooled, and pooled rows can never overwrite a `measured` r
   (`routes_from_labels.py`); observed rows never overwrite measured ones.
 - The ledger (`<home>/evalroute/labels.jsonl`) may contain task text. It is local. Never
   commit it, never upload it raw.
-- Home directory: `EVALROUTE_HOME`, else `HERMES_HOME`, else `~/.hermes`. Set
-  `EVALROUTE_HOME` if you are not a Hermes user.
-- `route`, `rate`, `sync`, `dispatch` and `report` speak `--json`; parse that, never the
-  card. (`install-routes` is Hermes-only and has no JSON mode.)
+- Home directory: `EVALROUTE_HOME`, else `HERMES_HOME`, else Hermes's platform default
+  (`%LOCALAPPDATA%\hermes` on Windows, `~/.hermes` elsewhere). Set `EVALROUTE_HOME` if you
+  are not a Hermes user and want the ledger somewhere else.
+- `route`, `rate`, `sync`, `dispatch`, `report` and `contribute` speak `--json`; parse that,
+  never the card. (`install-routes` is Hermes-only and has no JSON mode.) `evalroute
+  --version` prints the resolved library version.
 - `<brief>.report.md` and `<brief>.dispatch.json` are train provenance, like the brief
   itself: commit them beside the brief. They hold ids, paths, exit codes and the worker's
   report — never the ledger's task text. Do not add them to `.gitignore`.
@@ -101,7 +103,8 @@ actually ran are ever pooled, and pooled rows can never overwrite a `measured` r
 | `evalroute/dispatch.py` | route → spawn runner → report + sidecar → rate line |
 | `evalroute/dataset.py` | `sync`: pinned dataset table under `<home>/evalroute/dataset/` |
 | `evalroute/report.py` | one static HTML page / `--json` over ledger, sidecars, sessions, trains |
-| `evalroute/contract.py` | `CONTRACT_VERSION` and the nine names the Hermes plugin may call |
+| `evalroute/contract.py` | `CONTRACT_VERSION` and the ten names the Hermes plugin may call |
+| `evalroute/contribute.py` | whitelist redaction, salt, cursor, gate, upload to `contributed/<user>/` |
 | `evalroute/harness/tier_a.py` | the Tier-A measurement harness (paid calls when run by hand) |
 | `evalroute/data/` | bundled `routes.yaml`, `facets.yaml` |
 | `examples/artifacts/` | the measured runs behind the three measured lanes |

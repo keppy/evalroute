@@ -15,7 +15,7 @@ from a talk QR code, the whole loop is five commands — see `AGENTS.md` for the
 full contract and rules:
 
 ```bash
-pip install evalroute
+uv tool install evalroute      # or: pip install evalroute
 evalroute route --json "fix the failing test in tests/test_x.py"
 ```
 
@@ -32,7 +32,8 @@ evalroute rate pass --route-id a1b2c3d4 --model z-ai/glm-5.3-flash \
     --effort medium --note "tests green" --json
 ```
 
-Every verb speaks `--json` (`route`, `rate`, `sync`, `dispatch`, `report`);
+Every verb speaks `--json` (`route`, `rate`, `sync`, `dispatch`, `report`,
+`contribute`);
 human output is unchanged without it. `table:` provenance values:
 `measured` (controlled runs — prefer these lanes), `observed`
 (same-maintainer workflow labels — a hint), `priors` (vendor benchmarks — a
@@ -46,9 +47,14 @@ default runner; any agent CLI works via a template (see
 ## Install
 
 ```bash
-pip install evalroute          # runtime: pyyaml only
-pip install "evalroute[hub]"   # + huggingface_hub, for `sync`
+uv tool install "evalroute[hub]"   # standalone CLI on PATH, + huggingface_hub for sync/contribute
+pip install evalroute              # as a library: runtime dep is pyyaml only
+evalroute --version
 ```
+
+Hermes users: install the plugin from the catalog instead
+(`hermes plugins install evalroute`); it pins this package and both surfaces
+share one ledger.
 
 ## CLI
 
@@ -65,8 +71,10 @@ evalroute install-routes --dry-run   # route table -> agent.reasoning_overrides
 ```
 
 Works with no Hermes installed: the home resolves `$EVALROUTE_HOME`, then
-`$HERMES_HOME`, then `~/.hermes`; the ledger, dataset pins, and
-effort-override reads all honor it.
+`$HERMES_HOME`, then Hermes's platform default (`%LOCALAPPDATA%\hermes` on
+Windows, `~/.hermes` elsewhere); the ledger, dataset pins, gate config and
+effort-override reads all honor it, so a standalone install and the Hermes
+plugin on the same machine see one ledger.
 
 ## Dispatch (with runners)
 
@@ -113,8 +121,8 @@ evalroute report --trains docs/trains --open   # one static HTML page: pending
 `--follow` never touches stdout's three-line contract, the exit code, or the
 report file; `evalroute report` is read-only over the ledger, `state.db`,
 and the trains dir, and writes one self-contained HTML file.
-`evalroute report --json` prints the computed data model — the
-machine-readable factory status — instead of writing HTML.
+`evalroute report --json` prints the computed data model instead of
+writing HTML.
 
 **Where the line is.** Hermes's UI shows Hermes things (transcripts,
 sessions); evalroute's report shows evalroute things (routes, arms, outcomes,
@@ -456,17 +464,18 @@ cards as `observed N tasks across K contributors, single-arm, pass R%`.
 The Hermes plugin is a thin adapter over this package, at
 `keppy/hermes-plugin-evalroute` (`/route`, `/rate`, the `evalroute_route`
 tool, the first-turn sniff, and the bundled skill live there; the routing
-core lives here). It relies on exactly the nine contract names in
+core lives here). It relies on exactly the ten contract names in
 `evalroute/contract.py` (`CONTRACT_VERSION = 1`): `routing.set_llm_facade`,
-`routing.evalroute_route`, `routing.handle_route_command`, `cli.setup_cli`,
-`cli.evalroute_cli`, `flywheel.handle_rate`, `flywheel.on_pre_command`,
+`routing.set_surface`, `routing.evalroute_route`,
+`routing.handle_route_command`, `cli.setup_cli`, `cli.evalroute_cli`,
+`flywheel.handle_rate`, `flywheel.on_pre_command`,
 `flywheel.on_post_llm_call`, `schemas.EVALROUTE_ROUTE`.
 
 ## Roadmap
 
-- `contribute`: opt-in sharing of measured/observed rows back to the
-  published dataset (never your raw ledger).
-- Pooled observed rows: aggregating opt-in observational labels with honest
-  provenance and gonogo verdicts.
+- More measured lanes. Six of nine rows are still priors; each one needs a
+  taskset with deterministic checkers and a paid harness run (~$1 per lane at
+  current prices). Contributed rows can contest a priors lane but never make
+  it `measured`.
 - Classifier fine-tune: replacing the keyword+LLM-fallback layers with a
   small trained classifier once the labeled corpus earns it.
