@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import flywheel, routing
+from . import demo, flywheel, routing
 from .dispatch import _latest_run
 from .paths import hermes_home
 
@@ -113,9 +113,9 @@ def _under(path_str: str, root: Path) -> bool:
 
 # --------------------------------------------------------------- ledger bits
 
-def _ledger_data() -> dict[str, Any]:
+def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """The flywheel half of the data model (JSON-able)."""
-    records = flywheel.read_labels()
+    records = records if records is not None else flywheel.read_labels()
     routes = [r for r in records if r.get("kind") == "route"]
     route_by_id = {r["id"]: r for r in routes if r.get("id")}
     pending = list(flywheel._pending_routes(records))
@@ -256,8 +256,34 @@ def _methods_section(data: dict[str, Any]) -> str:
 # ------------------------------------------------------------- session store
 
 def _sessions_data(db_path: Path, per_train_ids: dict[str, set[str]],
-                   trains: Path | None) -> dict[str, Any]:
-    """JSON-able session-store half of the data model."""
+                   trains: Path | None,
+                   sidecar_cost: dict[str, float] | None = None) -> dict[str, Any]:
+    """JSON-able session-store half of the data model.
+
+    ``sidecar_cost`` (demo mode, no state.db): session_id -> cost from the
+    dispatch sidecars, so the sessions section still shows real-looking
+    per-run spend.
+    """
+    if not db_path.exists() and sidecar_cost:
+        out = {"present": True, "trains": [], "source": "dispatch sidecars"}
+        for train, ids in sorted(per_train_ids.items()):
+            sessions = []
+            total = 0.0
+            for sid in sorted(ids):
+                cost = sidecar_cost.get(sid)
+                if cost is None:
+                    continue
+                total += float(cost)
+                sessions.append({"id": sid, "title": "dispatched worker (demo)",
+                                 "model": "", "started": "", "duration": "-",
+                                 "messages": 0, "tools": 0, "tokens_in": 0,
+                                 "tokens_out": 0,
+                                 "cost_usd": round(float(cost), 2)})
+            if sessions:
+                out["trains"].append({"name": train, "sessions": sessions,
+                                      "total_cost_usd": round(total, 2),
+                                      "count": len(sessions)})
+        return out
     if not db_path.exists():
         return {"present": False,
                 "note": f"session store not found at {db_path} — sessions section skipped",
@@ -525,21 +551,41 @@ def _drift_section(data: dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------------- page
 
-def _data_model(trains: Path | None, factory_json: str | None) -> dict[str, Any]:
+def _data_model(trains: Path | None, factory_json: str | None,
+                is_demo: bool = False) -> dict[str, Any]:
     """The machine-readable report: everything the HTML page renders from."""
-    ledger = _ledger_data()
+    if is_demo:
+        ledger_records = demo.load_demo_ledger()
+        trains = demo.demo_trains_dir()
+    else:
+        ledger_records = None
+    ledger = _ledger_data(ledger_records)
     trains_data = _trains_data(trains)
-    sessions = _sessions_data(hermes_home() / "state.db",
-                              {t["name"]: {b["session_id"] for b in t["briefs"]
-                                           if b["session_id"]}
-                               for t in trains_data["trains"]},
-                              trains)
-    drift = _drift_data(factory_json)
+    sidecar_cost: dict[str, float] | None = None
+    if is_demo:
+        sidecar_cost = {}
+        for train in trains_data["trains"]:
+            for brief in train["briefs"]:
+                run = _latest_run(
+                    (trains / train["name"] /
+                     brief["brief"].replace(".md", ".dispatch.json")))
+                if run and run.get("session_id") and run.get("estimated_cost_usd"):
+                    sidecar_cost[str(run["session_id"])] = \
+                        float(run["estimated_cost_usd"])
+    sessions = _sessions_data(
+        hermes_home() / "state.db",
+        {t["name"]: {b["session_id"] for b in t["briefs"]
+                     if b["session_id"]}
+         for t in trains_data["trains"]},
+        trains, sidecar_cost=sidecar_cost)
+    drift = _drift_data(factory_json if not is_demo else None)
     return {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "evalroute_version": routing._lib_version(),
         "table": routing._table_line(),
-        "ledger_path": str(flywheel.labels_path()),
+        "ledger_path": ("demo fixture (evalroute/data/demo/labels.jsonl) "
+                        if is_demo else str(flywheel.labels_path())),
+        "demo": is_demo,
         "routes": ledger["routes"],
         "outcomes": ledger["outcomes"],
         "pending": ledger["pending"],
@@ -552,8 +598,9 @@ def _data_model(trains: Path | None, factory_json: str | None) -> dict[str, Any]
     }
 
 
-def _render(trains: Path | None, factory_json: str | None, command: str) -> str:
-    data = _data_model(trains, factory_json)
+def _render(trains: Path | None, factory_json: str | None, command: str,
+            is_demo: bool = False) -> str:
+    data = _data_model(trains, factory_json, is_demo)
     ledger = {"pending": data["pending"], "outcome_rows": data["outcome_rows"],
               "tally": data["tally"], "methods": data["methods"]}
 
@@ -562,7 +609,6 @@ def _render(trains: Path | None, factory_json: str | None, command: str) -> str:
         f"{data['table']} | ledger: {data['ledger_path']} | "
         f"{data['routes']} routes, {data['outcomes']} outcomes, "
         f"{len(data['pending'])} pending")
-
     body = "\n".join([
         _now_section(ledger["pending"]),
         _outcomes_section(ledger),
@@ -572,7 +618,12 @@ def _render(trains: Path | None, factory_json: str | None, command: str) -> str:
         _trains_section(data["trains"]),
         _drift_section(data["drift"]),
     ])
-    return _PAGE.substitute(header=_esc(header), body=body, footer=_esc(command))
+    badge = ("<p style='display:inline-block;background:#b3261e;color:#fff;"
+             "padding:0.15rem 0.5rem;border-radius:3px;font-size:0.8rem;"
+             "font-weight:700'>DEMO DATA — synthetic fixture, never your "
+             "ledger</p>") if is_demo else ""
+    return _PAGE.substitute(header=_esc(header) + badge, body=body,
+                            footer=_esc(command))
 
 
 def _command_line(args: Any, out_path: Path, trains: Path | None,
@@ -591,23 +642,29 @@ def _command_line(args: Any, out_path: Path, trains: Path | None,
 
 def run(args: Any) -> int:
     """Handler for `evalroute report`. Returns 0 (advisory page; never fails)."""
+    is_demo = bool(getattr(args, "demo", False))
+    default_name = "report-demo.html" if is_demo else "report.html"
     out_path = Path(getattr(args, "out", None)
-                    or (hermes_home() / "evalroute" / "report.html"))
+                    or (hermes_home() / "evalroute" / default_name))
     trains_arg = getattr(args, "trains", None)
-    trains = Path(trains_arg) if trains_arg else (
-        Path("./docs/trains") if Path("./docs/trains").is_dir() else None)
+    if is_demo and not trains_arg:
+        trains = demo.demo_trains_dir()  # resolved after _data_model anyway
+    else:
+        trains = Path(trains_arg) if trains_arg else (
+            Path("./docs/trains") if Path("./docs/trains").is_dir() else None)
     factory_json = getattr(args, "factory_json", None)
     watch = getattr(args, "watch", None)
     command = _command_line(args, out_path, trains, factory_json)
 
     def _write() -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(_render(trains, factory_json, command),
+        out_path.write_text(_render(trains, factory_json, command, is_demo),
                             encoding="utf-8")
 
     if not watch:
         if getattr(args, "json", False):
-            print(json.dumps(_data_model(trains, factory_json), indent=2))
+            print(json.dumps(_data_model(trains, factory_json, is_demo),
+                             indent=2))
             return 0
         _write()
         print(f"report: {out_path}")

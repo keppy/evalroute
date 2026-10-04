@@ -20,3 +20,5 @@ evalroute = "evalroute.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["evalroute"]
+# hatchling packages the whole evalroute tree, data/ (incl. demo/) included;
+# verified by tests/test_report_demo.py::test_demo_fixture_ships_in_wheel.

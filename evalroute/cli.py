@@ -103,6 +103,9 @@ def setup_cli(subparser) -> None:
                                "(one stderr line per regen)")
     report_p.add_argument("--trains", help="Trains dir (default: ./docs/trains if it exists)")
     report_p.add_argument("--factory-json", help="factory check --json findings to embed")
+    report_p.add_argument("--demo", action="store_true",
+                          help="render from the bundled synthetic fixture "
+                               "(never reads or writes your ledger)")
     contrib_p = subs.add_parser("contribute",
                                 help="Upload redacted outcome rows to the flywheel dataset "
                                      "(opt-in; --dry-run first)")
