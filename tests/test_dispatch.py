@@ -209,3 +209,124 @@ def test_dispatch_imported_as_package_module():
     from evalroute import dispatch
     assert dispatch.__name__ == "evalroute.dispatch"
     assert dispatch.__package__ == "evalroute"
+
+
+# ------------------------------------------------------------------ --follow
+
+_FOLLOW_STUB_TEMPLATE = r'''
+import json, os, sqlite3, sys, time
+
+db = os.environ["STUB_STATE_DB"]
+session = os.environ["STUB_SESSION_ID"]
+cwd = os.environ["STUB_CWD"]
+since = float(os.environ["STUB_SINCE"])
+
+con = sqlite3.connect(db)
+con.execute("create table if not exists sessions (id TEXT PRIMARY KEY, "
+            "title TEXT, cwd TEXT, model TEXT, started_at REAL, ended_at REAL, "
+            "last_activity_at REAL, message_count INTEGER, tool_call_count INTEGER, "
+            "input_tokens INTEGER, output_tokens INTEGER, estimated_cost_usd REAL, "
+            "profile_name TEXT)")
+con.execute("create table if not exists messages (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT, tool_call_id TEXT, "
+            "tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL)")
+con.execute("insert or replace into sessions (id, title, cwd, model, started_at) "
+            "values (?, ?, ?, ?, ?)", (session, "worker", cwd, "stub/model", time.time()))
+con.commit()
+
+rows = json.loads(os.environ["STUB_ROWS"])
+for delay, role, tool, content in rows:
+    time.sleep(delay)
+    con.execute("insert into messages (session_id, role, tool_name, content, timestamp) "
+                "values (?, ?, ?, ?, ?)",
+                (session, role, tool, content, time.time()))
+    con.commit()
+con.close()
+
+print("REPORT BODY")
+print(f"session_id: {session}", file=sys.stderr)
+sys.exit(int(os.environ.get("STUB_EXIT", "0")))
+'''
+
+
+def _follow_env(monkeypatch, tmp_path, rows, session="20261003_010101_worker1",
+                exit_code=0):
+    """A stub child that owns the fixture state.db, plus its env."""
+    stub = tmp_path / "hermes_follow_stub.py"
+    stub.write_text(_FOLLOW_STUB_TEMPLATE, encoding="utf-8")
+    db = tmp_path / "state.db"
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    monkeypatch.setenv("STUB_STATE_DB", str(db))
+    monkeypatch.setenv("STUB_SESSION_ID", session)
+    monkeypatch.setenv("STUB_CWD", str(tmp_path))
+    monkeypatch.setenv("STUB_ROWS", json.dumps(rows))
+    monkeypatch.setenv("STUB_SINCE", str(time.time() - 1))
+    monkeypatch.setenv("STUB_EXIT", str(exit_code))
+    return db
+
+
+def test_follow_streams_worker_messages(home, tmp_path, monkeypatch, capsys):
+    rows = [
+        [0.0, "user", None, "do the thing"],
+        [0.0, "assistant", None, "working on it"],
+        [0.0, "tool", "terminal", "exit code 0"],
+        [3.0, "assistant", None, "all done"],
+    ]
+    _follow_env(monkeypatch, tmp_path, rows)
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=str(tmp_path),
+                        task=None, out=None, timeout=None, rate_on_exit=None,
+                        dry_run=False, follow=True))
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "  user  do the thing" in err
+    assert "  assistant  working on it" in err
+    assert "  tool/terminal  exit code 0" in err
+    assert "  assistant  all done" in err
+    lines = [l for l in err.strip().splitlines() if l.strip()]
+    assert lines[0].startswith("lane:")  # the card stays first on stderr
+
+
+def test_follow_missing_store_still_waits(home, tmp_path, monkeypatch, capsys):
+    # no STUB_STATE_DB env -> the stub never creates state.db; dispatch must
+    # still wait for the child and stream nothing, exit code unaffected
+    stub = tmp_path / "hermes_stub.py"
+    stub.write_text("import time; time.sleep(1); print('REPORT BODY')\n",
+                    encoding="utf-8")
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    brief = _make_brief(tmp_path)
+    started = time.time()
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=str(tmp_path),
+                        task=None, out=None, timeout=None, rate_on_exit=None,
+                        dry_run=False, follow=True))
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert time.time() - started >= 1  # waited for the child, did not race it
+    assert "session store not found" in err
+    assert brief.with_name("brief.report.md").read_text(encoding="utf-8") == "REPORT BODY\n"
+
+
+def test_follow_never_touches_stdout(home, tmp_path, monkeypatch, capsys):
+    rows = [[0.0, "user", None, "hello"], [0.0, "assistant", None, "hi"]]
+    _follow_env(monkeypatch, tmp_path, rows)
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=str(tmp_path),
+                        task=None, out=None, timeout=None, rate_on_exit=None,
+                        dry_run=False, follow=True))
+    out = capsys.readouterr().out
+    assert rc == 0
+    lines = out.strip().splitlines()
+    assert len(lines) == 3  # the stdout contract is unchanged
+    assert "hello" not in out and "hi" not in out
+
+
+def test_follow_timeout_kills_child(home, tmp_path, monkeypatch, capsys):
+    stub = tmp_path / "hermes_stub.py"
+    stub.write_text("import time; time.sleep(30)\n", encoding="utf-8")
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=None, task=None,
+                        out=None, timeout=1, rate_on_exit=None, dry_run=False,
+                        follow=True))
+    assert rc == 124
+    assert brief.with_name("brief.report.md").exists()

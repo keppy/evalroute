@@ -69,6 +69,9 @@ def setup_cli(subparser) -> None:
     dispatch_p.add_argument("--timeout", type=float, help="Kill the child after SECONDS (exit 124)")
     dispatch_p.add_argument("--rate-on-exit", choices=["fail"],
                             help="Auto-rate fail when the child exits non-zero (never auto-passes)")
+    dispatch_p.add_argument("--follow", action="store_true",
+                            help="Stream the worker session's new messages from the "
+                                 "session store to stderr while it runs")
     dispatch_p.add_argument("--dry-run", action="store_true",
                             help="Route and print the argv; spawn nothing")
     subparser.set_defaults(func=evalroute_cli)
