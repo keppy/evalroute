@@ -240,6 +240,7 @@ def test_corrupt_current_falls_back_to_bundled(tmp_path, capsys, monkeypatch):
 def test_route_json_envelope_has_table():
     out = json.loads(routing.evalroute_route({"task": "prove the Riemann hypothesis"}))
     assert out["table"] == f"table: bundled (evalroute {__version__})"
+    assert out["evalroute_version"] == __version__
 
 
 def test_route_cli_json_has_table(tmp_path, capsys, monkeypatch):

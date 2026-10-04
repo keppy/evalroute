@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1] - 2026-10-04
+
+### Added
+
+- `evalroute --version` and an `evalroute_version` field in `route --json`, so an
+  installer can assert which library is actually resolved from PATH. Motivated by
+  a day on which `hermes evalroute` ran 0.7.0 while 0.7.1 was installed in the
+  wrong environment: a verb probe cannot tell versions apart.
+
 ## [0.8.0] - 2026-10-04
 
 ### Added

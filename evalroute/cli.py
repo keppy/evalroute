@@ -4,7 +4,7 @@ import argparse
 import json
 
 from . import dataset, dispatch, flywheel, report, routing
-from .routing import _route_for_args, _tool_result, install_routes, set_surface
+from .routing import _lib_version, _route_for_args, _tool_result, install_routes, set_surface
 
 _WORKFLOW_EPILOG = """\
 workflow (route -> arm -> rate, in the session that runs the task):
@@ -27,6 +27,8 @@ same as ever, unrated routes teach nothing."""
 
 def setup_cli(subparser) -> None:
     """argparse wiring for `hermes evalroute` (register_cli_command setup_fn)."""
+    subparser.add_argument("--version", action="version",
+                           version=f"evalroute {_lib_version()}")
     subs = subparser.add_subparsers(dest="evalroute_action")
     route_p = subs.add_parser("route", help="Classify a task and print a route card",
                               epilog=_WORKFLOW_EPILOG,

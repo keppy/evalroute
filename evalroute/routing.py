@@ -514,6 +514,9 @@ def _tool_result(card: str, lane: dict[str, Any], conf: float, pinned: bool,
         "provider": lane.get("provider") or "nous",
         "provenance": lane.get("provenance", ""),
         "table": _table_line(),
+        # The resolved library version, so an installer can assert what is
+        # actually running from PATH (a verb probe cannot tell 0.7.0 from 0.7.1).
+        "evalroute_version": _lib_version(),
         "card": card,
     }, ensure_ascii=False)
 
