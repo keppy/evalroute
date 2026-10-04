@@ -23,6 +23,10 @@ from evalroute import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# The card snapshots (MATH_041 / PROSE_041) were captured on the chat surface:
+# the card's /-slash command strings are the hermes-chat rendering.
+pytestmark = pytest.mark.usefixtures("hermes_chat")
+
 FIXED_SHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 FAKE_HF_CALLS: dict[str, int] = {}
 

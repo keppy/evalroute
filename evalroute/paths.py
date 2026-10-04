@@ -1,9 +1,9 @@
 """Hermes-home resolution.
 
-The library must run with no Hermes installed: when ``hermes_constants`` is
-importable its ``get_hermes_home`` wins; otherwise ``EVALROUTE_HOME`` wins
-(the harness-neutral name — an agent with no Hermes installed sets this),
-then ``HERMES_HOME`` (tests set it), falling back to ``~/.hermes``.
+Precedence: ``EVALROUTE_HOME`` > ``HERMES_HOME`` > ``hermes_constants`` (its
+``get_hermes_home``, when importable) > ``~/.hermes``. The env names let the
+library run with no Hermes installed (``EVALROUTE_HOME`` — the harness-neutral
+name) and keep tests isolated (``HERMES_HOME``).
 """
 
 from __future__ import annotations
@@ -20,4 +20,4 @@ def hermes_home() -> Path:
         from hermes_constants import get_hermes_home
         return Path(get_hermes_home())
     except Exception:
-        return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+        return Path.home() / ".hermes"

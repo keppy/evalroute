@@ -9,11 +9,17 @@ import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from evalroute import flywheel
 from evalroute import routing
 from evalroute import cli
 
 from tests.test_flywheel import home  # noqa: F401  re-exported fixture
+
+# The dispatch rate line is a terminal command (`hermes evalroute rate ...`),
+# i.e. the hermes-cli surface; the card it prints on stderr is not asserted.
+pytestmark = pytest.mark.usefixtures("hermes_cli")
 
 STUB = r'''
 import os, sys

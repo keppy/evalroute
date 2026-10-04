@@ -54,3 +54,50 @@ def test_effort_auto_reads_hermes_home_config_without_hermes_constants(tmp_path,
     (tmp_path / "config.yaml").write_text(
         f"agent:\n  reasoning_overrides:\n    {model}: {effort}\n", encoding="utf-8")
     assert routing._effort_auto(lane) is True
+
+
+# ------------------------------------------------- env precedence (C4 + H5)
+
+def _fake_hermes_constants(tmp_path, monkeypatch, home_dir):
+    """An importable hermes_constants naming a decoy home dir."""
+    monkeypatch.delitem(sys.modules, "hermes_constants", raising=False)  # force a fresh import
+    mod_dir = tmp_path / "fake_pkg"
+    mod_dir.mkdir(exist_ok=True)
+    (mod_dir / "hermes_constants.py").write_text(
+        f"def get_hermes_home():\n    return {home_dir!r}\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(mod_dir))
+
+
+def test_evalroute_home_beats_hermes_home_and_hermes_constants(tmp_path, monkeypatch):
+    """Both env vars set, hermes_constants importable -> EVALROUTE_HOME wins."""
+    er_home, h_home, const_home = (tmp_path / "er"), (tmp_path / "hh"), (tmp_path / "const")
+    _fake_hermes_constants(tmp_path, monkeypatch, str(const_home))
+    monkeypatch.setenv("EVALROUTE_HOME", str(er_home))
+    monkeypatch.setenv("HERMES_HOME", str(h_home))
+    assert flywheel.labels_path().is_relative_to(er_home)
+
+
+def test_evalroute_home_beats_none_importable_hermes_constants(tmp_path, monkeypatch):
+    """Same, with sys.modules['hermes_constants'] = None (import raises)."""
+    er_home, h_home = (tmp_path / "er"), (tmp_path / "hh")
+    monkeypatch.setitem(sys.modules, "hermes_constants", None)
+    monkeypatch.setenv("EVALROUTE_HOME", str(er_home))
+    monkeypatch.setenv("HERMES_HOME", str(h_home))
+    assert flywheel.labels_path().is_relative_to(er_home)
+
+
+def test_hermes_home_beats_importable_hermes_constants(tmp_path, monkeypatch):
+    """Only HERMES_HOME set, fake importable hermes_constants -> HERMES_HOME wins."""
+    h_home, const_home = (tmp_path / "hh"), (tmp_path / "const")
+    const_home.mkdir()
+    _fake_hermes_constants(tmp_path, monkeypatch, str(const_home))
+    monkeypatch.setenv("HERMES_HOME", str(h_home))
+    assert flywheel.labels_path().is_relative_to(h_home)
+
+
+def test_importable_hermes_constants_used_when_no_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.delenv("EVALROUTE_HOME", raising=False)
+    const_home = tmp_path / "const"
+    _fake_hermes_constants(tmp_path, monkeypatch, str(const_home))
+    assert flywheel.labels_path().is_relative_to(const_home)

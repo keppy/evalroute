@@ -4,6 +4,21 @@
 
 ### Added
 
+- `AGENTS.md`: the agent-operator brief — the five-command loop, provenance
+  semantics (`measured` / `observed` / `priors`), the no-self-rating rule for
+  dispatch, the skip-for-unavailable-arms rule, `rate`'s non-zero exit when
+  nothing was logged, the five `--json` verbs, and the file map.
+- `evalroute.routing.set_surface(name)` (contract name #10, `CONTRACT_VERSION`
+  stays 1): surface-aware command strings. The standalone console script pins
+  `"cli"`, the plugin's CLI handler `"hermes-cli"`, its slash-command/tool
+  handlers `"hermes-chat"` (the plugin will call it; until it does, its CLI
+  path claims `hermes-cli` itself). Every command string in the card
+  (`route:`, `route id:`, `next:`) and the dispatch `rate it:` line renders
+  via `cmd_rate` / `cmd_route_lane` / `cmd_switch_arm`: a reader with no
+  Hermes gets `evalroute ...` commands; chat keeps today's `/...` text
+  verbatim. Card snapshots on the chat surface and dispatch snapshots on the
+  hermes-cli surface are byte-identical to 0.6.0's output.
+
 - `dispatch --follow`: after spawning the child, poll the session store
   (`<hermes home>/state.db`, read-only sqlite URI, 2 s) for the newest
   session whose `cwd` matches `--in` (or the brief's dir) and `started_at`
@@ -52,6 +67,25 @@
 
 ### Changed
 
+- `dispatch --runner` templates: quoted backslash Windows paths now work —
+  per-token quote strip happens after placeholder substitution, and a spawn
+  that cannot find `argv[0]` prints one stderr diagnostic
+  (`evalroute dispatch: runner argv[0] not found: <token>` with the resolved
+  argv) instead of a bare exit 127.
+- `dispatch --json` now guarantees exactly one JSON object on stdout even
+  with `--rate-on-exit fail`: the auto-rate confirmation rides in the
+  envelope under `"rate_on_exit"` (`{logged, message}`) instead of trailing
+  it as a human line.
+- `rate` exits 1 when nothing was logged (bogus or already-consumed route
+  id, usage error); human output is unchanged. `dispatch --rate-on-exit`
+  still returns the worker's exit code.
+- `paths.hermes_home()` docstring now states the real precedence
+  (`EVALROUTE_HOME` > `HERMES_HOME` > `hermes_constants` > `~/.hermes`) and a
+  dead `HERMES_HOME` re-read in the except branch is gone; new precedence
+  tests in `tests/test_isolation.py`.
+- `llms.txt` names the five `--json` verbs; README's CLI section no longer
+  claims byte-identical output with `hermes evalroute ...` (cards now render
+  per surface).
 - README reordered agent-first: the five-command loop and the `--json`
   output shape are the first screen; route table, classification, facets,
   flywheel, dataset/sync follow; "Where the line is" states the Hermes /

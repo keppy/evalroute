@@ -52,8 +52,9 @@ pip install "evalroute[hub]"   # + huggingface_hub, for `sync`
 
 ## CLI
 
-The same argparse tree the plugin registers, standalone and byte-identical in
-output to `hermes evalroute ...`:
+The same argparse tree the plugin registers, standalone. Cards render
+command strings for the calling surface: `evalroute ...` here, `hermes
+evalroute ...` under the plugin CLI, `/...` slash commands in chat:
 
 ```bash
 evalroute route --lane routine-coding "fix the failing test"   # route card

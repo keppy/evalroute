@@ -129,7 +129,10 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
                  .replace("{brief}", str(brief))
                  .replace("{indir}", str(indir or ""))
                  .replace("{brief_text}", brief_text))
-        argv.append(value)
+        # posix=False on Windows keeps literal quotes around quoted backslash
+        # paths ("C:\Users\...\python.exe"); strip them per token AFTER the
+        # substitution so a substituted path with spaces is never re-split.
+        argv.append(value.strip('"'))
     return argv
 
 
@@ -366,6 +369,12 @@ def _fmt_dur(seconds: float) -> str:
     return f"{m}m{s:02d}s"
 
 
+def _report_missing_argv0(argv: list[str]) -> None:
+    """One diagnostic line when the runner binary does not exist (C2)."""
+    print(f"evalroute dispatch: runner argv[0] not found: {argv[0]}\n"
+          f"  resolved argv: {shlex.join(argv)}", file=sys.stderr)
+
+
 def run(args: Any) -> int:
     """Handler for `hermes evalroute dispatch`. Returns the process exit code."""
     brief = Path(args.brief).resolve()
@@ -405,8 +414,7 @@ def run(args: Any) -> int:
         argv = _build_argv(model, effort, provider, brief, indir)
     else:
         argv = _build_runner_argv(template, model, effort, provider, brief, indir)
-    rate_line = (f"rate it:  hermes evalroute rate pass|fail --route-id {route_id} "
-                 f"--model {model} --effort {effort} --note \"...\"")
+    rate_line = f"rate it:  {tools.cmd_rate(route_id, model, effort, note='...')}"
     started_ts = time.time()
 
     def _emit(payload: dict[str, Any], lines: list[str]) -> None:
@@ -430,7 +438,7 @@ def run(args: Any) -> int:
         _write_sidecar(brief, sidecar)
         _emit(sidecar, [f"would run: {shlex.join(argv)}",
                f"dry run: route {route_id} noted but never rated - it is a SKIP for the human "
-               f"(/rate skip --route-id {route_id})",
+               f"({tools.cmd_rate(route_id=route_id, verdict='skip', note='')})",
                rate_line])
         return 0
 
@@ -460,13 +468,23 @@ def run(args: Any) -> int:
         "report": str(out_path), "rate_line": rate_line,
     }
     _write_sidecar(brief, sidecar)
-    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}), "
-           f"exit {code}, {_fmt_dur(elapsed)}",
-           f"report: {out_path}   session: {session_id or '-'}",
-           rate_line])
+    rate_exit: dict[str, Any] | None = None
     if code != 0 and getattr(args, "rate_on_exit", None) == "fail":
         confirmation = fw.handle_rate(
             f"fail --route-id {route_id} --model {model} --effort {effort} "
             f"--note exit {code}")
-        print(confirmation)
+        if as_json:
+            # C1: with --json, stdout must be exactly one JSON object — the
+            # confirmation rides in the envelope instead of trailing it.
+            rate_exit = {"logged": bool(fw._LAST_RATE.get("logged")),
+                         "message": confirmation}
+            sidecar["rate_on_exit"] = rate_exit
+        else:
+            print(confirmation)
+    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}), "
+           f"exit {code}, {_fmt_dur(elapsed)}",
+           f"report: {out_path}   session: {session_id or '-'}",
+           rate_line])
+    if rate_exit is None and code == 127:
+        _report_missing_argv0(argv)
     return code

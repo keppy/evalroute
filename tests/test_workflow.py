@@ -11,6 +11,9 @@ from evalroute.flywheel import handle_rate
 
 from tests.test_flywheel import home  # reuse the HERMES_HOME fixture
 
+# The card footer asserts /-slash command strings (hermes-chat surface).
+pytestmark = pytest.mark.usefixtures("hermes_chat")
+
 
 # ------------------------------------------------------------ card footer
 

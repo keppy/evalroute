@@ -28,7 +28,12 @@ Read `model`, `effort`, `route_id`, `provenance`, `table` from the `route` envel
 Always pass `--model` and `--effort` to `rate` — they are what you *actually ran*, and
 they make the row `arm_attribution: explicit_user`. A `rate` without them is filed as
 `arm unknown` and is worth little. A precise `fail --note "<cause>"` is worth more than
-a soft pass. `skip` is for probes that were never meant to be judged.
+a soft pass. `skip` is for probes that were never meant to be judged — and for arms you
+could not run: the table's arms name a provider (`"provider": "nous"` today); if you have
+no access to that provider or model, run the task on what you have and `rate skip --note
+"arm unavailable: ran <your model> instead"` rather than labelling an arm you did not use.
+`rate` exits non-zero when nothing was logged (bogus or already-consumed route id); check
+the exit code or `"logged"` in `--json`, never assume.
 
 ## Dispatching sub-tasks on a routed arm
 
@@ -68,7 +73,11 @@ is planned and not yet shipped; nothing leaves your machine today.
   commit it, never upload it raw.
 - Home directory: `EVALROUTE_HOME`, else `HERMES_HOME`, else `~/.hermes`. Set
   `EVALROUTE_HOME` if you are not a Hermes user.
-- Every verb speaks `--json`; parse that, never the card.
+- `route`, `rate`, `sync`, `dispatch` and `report` speak `--json`; parse that, never the
+  card. (`install-routes` is Hermes-only and has no JSON mode.)
+- `<brief>.report.md` and `<brief>.dispatch.json` are train provenance, like the brief
+  itself: commit them beside the brief. They hold ids, paths, exit codes and the worker's
+  report — never the ledger's task text. Do not add them to `.gitignore`.
 - Hermes touchpoints in this library are exactly three and all optional: the home path,
   an LLM facade for weak-signal classification (`None` disables it), and read-only
   `state.db` for `dispatch --follow` / `report` sessions.

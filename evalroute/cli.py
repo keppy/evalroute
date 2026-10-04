@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import dataset, dispatch, flywheel, report
-from .routing import _route_for_args, _tool_result, install_routes
+from . import dataset, dispatch, flywheel, report, routing
+from .routing import _route_for_args, _tool_result, install_routes, set_surface
 
 _WORKFLOW_EPILOG = """\
 workflow (route -> arm -> rate, in the session that runs the task):
@@ -104,6 +104,12 @@ def setup_cli(subparser) -> None:
 
 def evalroute_cli(args) -> int:
     """Handler for `hermes evalroute ...` (register_cli_command handler_fn)."""
+    # The plugin calls this handler directly (no process main()); claim the
+    # hermes CLI surface here so card command strings render as
+    # `hermes evalroute ...`. The console script (main) pins "cli" first,
+    # which makes this a no-op there.
+    if routing.SURFACE == "cli" and not routing._SURFACE_EXPLICIT:
+        routing.set_surface("hermes-cli")
     action = getattr(args, "evalroute_action", None)
     if action == "install-routes":
         return install_routes(dry_run=bool(getattr(args, "dry_run", False)))
@@ -137,7 +143,11 @@ def evalroute_cli(args) -> int:
             print(json.dumps(data))
         else:
             print(message)
-        return 0
+        # C5: a rating that was not logged (bogus or already-consumed route
+        # id, usage error) must not masquerade as success on the exit code.
+        # `dispatch --rate-on-exit` calls flywheel.handle_rate directly and
+        # already returns the worker's code, so this does not propagate there.
+        return 0 if getattr(flywheel, "_LAST_RATE", {}).get("logged") else 1
     if action == "route":
         task = " ".join(getattr(args, "task", []) or [])
         lane = getattr(args, "lane", None)
@@ -168,9 +178,10 @@ def evalroute_cli(args) -> int:
 
 
 def main() -> int:
-    """Standalone entry point (`evalroute ...`), byte-identical to `hermes evalroute ...`."""
+    """Standalone entry point (`evalroute ...`): cli-surface command strings."""
     import sys
 
+    set_surface("cli")  # pin the surface before the handler can claim another
     parser = argparse.ArgumentParser(
         prog="evalroute",
         description="Route tasks to the right (model, reasoning effort) arm",

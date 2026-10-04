@@ -1,4 +1,4 @@
-"""The nine contract names the Hermes plugin relies on must all resolve."""
+"""The ten contract names the Hermes plugin relies on must all resolve."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ def test_contract_version_is_one():
     assert contract.CONTRACT_VERSION == 1
 
 
-def test_all_nine_contract_names_resolve():
+def test_all_ten_contract_names_resolve():
     from evalroute import cli, flywheel, routing, schemas  # noqa: F401
 
     resolved = {
         "routing.set_llm_facade": routing.set_llm_facade,
+        "routing.set_surface": routing.set_surface,
         "routing.evalroute_route": routing.evalroute_route,
         "routing.handle_route_command": routing.handle_route_command,
         "cli.setup_cli": cli.setup_cli,

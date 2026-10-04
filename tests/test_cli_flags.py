@@ -49,7 +49,7 @@ def test_cli_rate_model_without_effort_rejected(home, capsys):
                          route_id=None, model="z-ai/glm-5.3-flash", effort=None,
                          note=None, dry_run=False)
     rc = cli.evalroute_cli(ns)
-    assert rc == 0  # handle_rate returns a usage string, the CLI prints it
+    assert rc == 1  # nothing was logged (C5): the usage string printed, exit 1
     assert "use --model and --effort together" in capsys.readouterr().out
     assert not [r for r in flywheel.read_labels() if r["kind"] == "outcome"]
 

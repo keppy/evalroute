@@ -124,6 +124,89 @@ def set_llm_facade(facade) -> None:
     _PLUGIN_LLM = facade
 
 
+# ------------------------------------------------------------------ surfaces
+#
+# One process-global surface, set by whoever invokes the handlers:
+#   "cli"         the standalone console script (`evalroute ...`) — cli.main
+#                 pins it before dispatching
+#   "hermes-cli"  the plugin's register_cli_command handler (`hermes evalroute
+#                 ...`) — cli.evalroute_cli claims it unless already claimed
+#   "hermes-chat" the plugin's slash-command / tool handlers (/route, /rate)
+# Every user-facing command string in the card and the dispatch rate line is
+# rendered by cmd_rate / cmd_route_lane / cmd_switch_arm for that surface, so
+# a reader with no Hermes gets `evalroute ...` commands it can actually run.
+SURFACE: str = "cli"
+_SURFACE_EXPLICIT = False  # main() pins "cli"; only then is it explicit
+_SURFACES = ("cli", "hermes-cli", "hermes-chat")
+
+
+def set_surface(name: str) -> None:
+    """Declare the invoking surface (see contract.py — contract name #10)."""
+    global SURFACE, _SURFACE_EXPLICIT
+    if name not in _SURFACES:
+        raise ValueError(f"unknown surface {name!r}; known surfaces: {', '.join(_SURFACES)}")
+    SURFACE = name
+    _SURFACE_EXPLICIT = True
+
+
+def reset_surface() -> None:
+    """Back to the standalone default, unclaimed (tests run in one process)."""
+    global SURFACE, _SURFACE_EXPLICIT
+    SURFACE = "cli"
+    _SURFACE_EXPLICIT = False
+
+
+def cmd_rate(route_id: str = "", model: str = "", effort: str = "",
+             verdict: str = "pass|fail", note: str = "why") -> str:
+    """The rate command, rendered for the active surface.
+
+    chat keeps the slash form (model/effort are the session's /model and
+    /reasoning there); cli and hermes-cli get the full terminal command with
+    the arm confirmed inline. `note` is a placeholder or the given reason;
+    empty note omits the flag (the card's route-id line has none).
+    """
+    if SURFACE == "hermes-chat":
+        parts = f"/rate {verdict}"
+        if route_id:
+            parts += f" --route-id {route_id}"
+        if note:
+            parts += f" --note {note}"
+        return parts
+    prefix = "hermes evalroute" if SURFACE == "hermes-cli" else "evalroute"
+    parts = f"{prefix} rate {verdict}"
+    if route_id:
+        parts += f" --route-id {route_id}"
+    if model:
+        parts += f" --model {model}"
+    if effort:
+        parts += f" --effort {effort}"
+    if note:
+        parts += f' --note "{note}"'
+    return parts
+
+
+def cmd_route_lane() -> str:
+    """The wrong-lane reroute command for the active surface."""
+    if SURFACE == "hermes-chat":
+        return "/route --lane <id> <same task>"
+    prefix = "hermes evalroute" if SURFACE == "hermes-cli" else "evalroute"
+    return f'{prefix} route --lane <id> "<same task>"'
+
+
+def cmd_switch_arm(model: str, effort: str) -> str:
+    """How to get onto this arm, for the active surface.
+
+    chat: /model (plus /reasoning unless the installed reasoning_overrides
+    already carry this model's effort — see _effort_auto). cli/hermes-cli:
+    the arm is stated inline; dispatch picks the model itself.
+    """
+    if SURFACE == "hermes-chat":
+        if not _effort_auto({"model": model, "effort": effort}):
+            return f"/model {model} then /reasoning {effort}"
+        return f"/model {model}"
+    return f"(run on {model} @ {effort})"
+
+
 # Negation cues: a keyword hit preceded by one of these within a few words is
 # not evidence for the lane. "not usually hard math though" must NOT count as
 # a math hit — this exact phrasing shipped a life-assistant description to the
@@ -356,7 +439,10 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
     """Render the human-readable route card."""
     lines = [
         f"lane: {lane['label']} ({lane['id']})",
-        f"route: {lane['model']} @ {lane['effort']}   <- run: /model {lane['model']}",
+        f"route: {lane['model']} @ {lane['effort']}"
+        # chat only: the arm switch hint; on the CLI surfaces the arm is
+        # already on this line and the next: footer carries the command.
+        + (f"   <- run: /model {lane['model']}" if SURFACE == "hermes-chat" else ""),
     ]
     if facets and len(facets) > 1:
         lines.append(f"facets: {' + '.join(facets)} (descriptive conjunction; lane chooses arm)")
@@ -382,14 +468,13 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
         lines.append(f"note: {lane['notes']}")
     lines.append(f"why here: {lane.get('match_hint', '')}")
     if route_id:
-        lines.append(f"route id: {route_id} (use /rate pass|fail --route-id {route_id} if routes overlap)")
+        lines.append(f"route id: {route_id} (use {cmd_rate(route_id=route_id, model=lane['model'], effort=_effort_for_override(lane), note='')} if routes overlap)")
     # Workflow footer: the card answers "what arm?", the footer answers
     # "what now?". Wrong lane -> fix it now (a --lane reroute re-logs the
     # assignment; /rate attributes to the LAST route on file).
-    lines.append(f"next: /model {lane['model']}"
-                 + (" then /reasoning " + _effort_for_override(lane) if not _effort_auto(lane) else "")
-                 + " | wrong lane? /route --lane <id> <same task>"
-                 " | when done: /rate pass|fail --note why")
+    lines.append(f"next: {cmd_switch_arm(lane['model'], _effort_for_override(lane))}"
+                 f" | wrong lane? {cmd_route_lane()}"
+                 f" | when done: {cmd_rate(model=lane['model'], effort=_effort_for_override(lane))}")
     return "\n".join(lines)
 
 

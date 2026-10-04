@@ -25,5 +25,24 @@ def isolated_hermes_home(tmp_path, monkeypatch):
     flywheel._MEMORY.clear()
     from evalroute import routing
     routing.reset_routes_cache()  # no test inherits another test's table resolution
+    routing.reset_surface()       # nor another test's command-string surface
     yield
     flywheel._MEMORY.clear()
+
+
+@pytest.fixture
+def hermes_chat():
+    """hermes-chat surface: card command strings keep the /-slash form."""
+    from evalroute import routing
+    routing.set_surface("hermes-chat")
+    yield
+    routing.reset_surface()
+
+
+@pytest.fixture
+def hermes_cli():
+    """hermes-cli surface: card command strings as `hermes evalroute ...`."""
+    from evalroute import routing
+    routing.set_surface("hermes-cli")
+    yield
+    routing.reset_surface()

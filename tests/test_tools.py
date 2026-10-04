@@ -12,6 +12,9 @@ from evalroute import routing
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Cards produced here assert the /-slash command strings (hermes-chat surface).
+pytestmark = pytest.mark.usefixtures("hermes_chat")
+
 
 # ------------------------------------------------------------------ table
 
