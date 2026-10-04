@@ -106,6 +106,8 @@ def setup_cli(subparser) -> None:
     report_p.add_argument("--demo", action="store_true",
                           help="render from the bundled synthetic fixture "
                                "(never reads or writes your ledger)")
+    report_p.add_argument("--theme", choices=("dark", "light"), default="dark",
+                          help="Page theme (default: dark; light = the classic page)")
     contrib_p = subs.add_parser("contribute",
                                 help="Upload redacted outcome rows to the flywheel dataset "
                                      "(opt-in; --dry-run first)")

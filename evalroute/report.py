@@ -31,44 +31,92 @@ _SESSION_LINE = re.compile(r"session:\s*(\S+)")
 _BRIEF_FILE = re.compile(r"^\d\d-.*\.md$")
 _VERDICTS = {"pass", "fail", "skip"}
 
+_MONO = "ui-monospace, Consolas, monospace"
+
+# One palette per theme; the <style> block is rendered from it, so the two
+# themes cannot structurally drift. Light = the pre-theme values.
+_THEMES: dict[str, dict[str, str]] = {
+    "dark": {
+        "bg": "#0e1116", "text": "#e6e6e6", "muted": "#9aa4b2",
+        "border": "#2a2f3a", "thbg": "#161b24", "codebg": "#1a2029",
+        "note": "#9aa4b2", "meta": "#9aa4b2", "skip": "#8a93a6",
+        "pass": "#5fd38d", "fail": "#ff7b72",
+        "corrb": "#e0b25a", "corrt": "#e0b25a",
+        "base_fs": "18px", "table_fs": "1rem", "maxw": "110rem",
+    },
+    "light": {
+        "bg": "#fafafa", "text": "#1a1a1a", "muted": "#666",
+        "border": "#ddd", "thbg": "#f0f0f0", "codebg": "#f0f0f0",
+        "note": "#666", "meta": "#555", "skip": "#777",
+        "pass": "#0a7d32", "fail": "#b3261e",
+        "corrb": "#d8a915", "corrt": "#7a5b00",
+        "base_fs": "16px", "table_fs": "0.85rem", "maxw": "72rem",
+    },
+}
+
+_CSS = string.Template("""body { font-family: -apple-system, "Segoe UI", sans-serif;
+        margin: 2rem auto; max-width: $maxw; padding: 0 1rem;
+        color: $text; background: $bg; font-size: $base_fs; }
+h1 { font-size: 1.5rem; margin-bottom: 0.3rem; }
+h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 2px solid $border;
+     padding-bottom: 0.2rem; }
+h3 { font-size: 1rem; margin-bottom: 0.2rem; }
+table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem;
+        font-size: $table_fs; }
+th, td { border: 1px solid $border; padding: 0.3rem 0.5rem; text-align: left;
+         vertical-align: top; }
+th { background: $thbg; }
+td.pass, .pass { color: $pass; font-weight: 600; }
+td.fail, .fail { color: $fail; font-weight: 600; }
+td.skip, .skip { color: $skip; font-weight: 600; }
+.note { color: $note; font-style: italic; }
+.meta { color: $meta; font-size: 0.85rem; }
+.wrap { white-space: pre-wrap; word-break: break-word; }
+.corr { margin: 0; padding-left: 0.6rem; border-left: 3px solid $corrb;
+        color: $corrt; font-size: 0.8rem; white-space: pre-wrap; }
+footer { margin-top: 3rem; color: $skip; font-size: 0.8rem;
+         border-top: 1px solid $border; padding-top: 0.5rem; }
+code, .mono { font-family: $mono; }
+code { background: $codebg; padding: 0 0.2rem; }
+.nowstrip { display: flex; gap: 1.5rem; margin: 1rem 0 0.5rem; flex-wrap: wrap; }
+.nowstrip .cell { border: 1px solid $border; padding: 0.5rem 1rem;
+                  min-width: 14rem; }
+.nowstrip .k { color: $muted; font-size: 0.75rem; text-transform: none; }
+.nowstrip .v { font-size: 1.15rem; font-weight: 600; margin-top: 0.2rem;
+               font-family: $mono; }
+.prov { font-family: $mono; font-weight: 600; }
+.prov-measured { color: #5fd38d; }
+.prov-observed { color: #e0b25a; }
+.prov-priors { color: #8a93a6; }
+""")
+
 _PAGE = string.Template("""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>evalroute report</title>
 <style>
-body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 2rem auto;
-       max-width: 72rem; padding: 0 1rem; color: #1a1a1a; background: #fafafa; }
-h1 { font-size: 1.5rem; margin-bottom: 0.3rem; }
-h2 { font-size: 1.15rem; margin-top: 2rem; border-bottom: 2px solid #ddd;
-     padding-bottom: 0.2rem; }
-h3 { font-size: 1rem; margin-bottom: 0.2rem; }
-table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem;
-        font-size: 0.85rem; }
-th, td { border: 1px solid #ddd; padding: 0.3rem 0.5rem; text-align: left;
-         vertical-align: top; }
-th { background: #f0f0f0; }
-td.pass { color: #0a7d32; font-weight: 600; }
-td.fail { color: #b3261e; font-weight: 600; }
-td.skip { color: #777; font-weight: 600; }
-.note { color: #666; font-style: italic; }
-.meta { color: #555; font-size: 0.85rem; }
-.wrap { white-space: pre-wrap; word-break: break-word; }
-.corr { margin: 0; padding-left: 0.6rem; border-left: 3px solid #d8a915;
-        color: #7a5b00; font-size: 0.8rem; white-space: pre-wrap; }
-footer { margin-top: 3rem; color: #777; font-size: 0.8rem;
-         border-top: 1px solid #ddd; padding-top: 0.5rem; }
-code { background: #f0f0f0; padding: 0 0.2rem; }
+${style}
 </style>
 </head>
 <body>
 <h1>evalroute report</h1>
 <p class="meta">${header}</p>
+${nowstrip}
 ${body}
 <footer>produced by: ${footer}</footer>
 </body>
 </html>
 """)
+
+
+def _prov_span(text: str) -> str:
+    """Provenance text as a coloured span, keyed on its first word."""
+    first = (text or "").split("-", 1)[0].split(" ", 1)[0].strip().lower()
+    value = _esc(text)
+    if first in ("measured", "observed", "priors"):
+        return f"<span class='prov prov-{first}'>{value}</span>"
+    return _esc(text)
 
 
 def _esc(value: Any) -> str:
@@ -156,7 +204,7 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
                "arm": f"{out.get('actual_model') or '?'}@{out.get('actual_effort') or '?'}",
                "verdict": out.get("rated") or "?",
                "method": route.get("method") or "", "note": out.get("note") or "",
-               "corrections": []}
+               "age": _age(out.get("consumes")), "corrections": []}
         for corr in corr_by_route.get(rid, []):
             bits = ["corrected by dispatcher"]
             if corr.get("from") or corr.get("to"):
@@ -174,6 +222,62 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
             "pending": pending_rows, "outcome_rows": outcome_rows,
             "tally": tally_rows,
             "methods": [{"method": m, "routes": c} for m, c in sorted(methods.items())]}
+
+
+def _now_strip_data(data: dict[str, Any]) -> dict[str, str]:
+    """The four Now strip values, also published in the JSON data model."""
+    outcomes = data.get("outcome_rows") or []
+    last = outcomes[0] if outcomes else None
+    if last:
+        last_v = f"{last['lane']} · {last['arm']} · {last['verdict']} · {last.get('age') or '?'}"
+    else:
+        last_v = "—"
+
+    cheapest = "—"
+    sessions = data.get("sessions") or {}
+    iso_now = datetime.now(timezone.utc).isocalendar()
+    by_arm: dict[str, dict[str, float]] = {}
+    for train in (sessions.get("trains") or []):
+        for s in (train.get("sessions") or []):
+            cost = s.get("cost_usd") or 0
+            model = s.get("model") or ""
+            if not model or not cost:
+                continue
+            started = s.get("started") or ""
+            try:
+                st = datetime.strptime(started, "%Y-%m-%d %H:%M").replace(
+                    tzinfo=timezone.utc)
+                if st.isocalendar()[:2] != iso_now[:2]:
+                    continue
+            except ValueError:
+                pass  # no parseable timestamp: count it anyway
+            key = f"{model}@{s.get('effort') or '?'}"
+            cell = by_arm.setdefault(key, {"cost": 0.0, "passes": 0})
+            cell["cost"] += float(cost)
+            if cost:
+                cell["passes"] += 1
+    if by_arm:
+        arm, cell = min(by_arm.items(), key=lambda kv: kv[1]["cost"] / max(1, kv[1]["passes"]))
+        per = cell["cost"] / max(1, cell["passes"])
+        cheapest = f"{arm} ${per:.2f}/pass"
+
+    cells = {
+        "routes_today": str(data.get("routes", 0)),
+        "pending": str(len(data.get("pending") or [])),
+        "last_outcome": last_v,
+        "cheapest_arm_this_week": cheapest,
+    }
+    return cells
+
+
+def _now_strip(data: dict[str, Any]) -> str:
+    """The four-cell Now strip under the header."""
+    cells = _now_strip_data(data)
+    inner = "".join(
+        f"<div class='cell'><div class='k'>{_esc(k.replace('_', ' '))}</div>"
+        f"<div class='v'>{_esc(v)}</div></div>"
+        for k, v in cells.items())
+    return f"<div class='nowstrip' id='nowstrip'>{inner}</div>"
 
 
 def _now_section(pending: list[dict[str, Any]]) -> str:
@@ -223,11 +327,14 @@ def _outcomes_section(data: dict[str, Any]) -> str:
 def _tally_section(data: dict[str, Any]) -> str:
     rows = []
     for cell in data["tally"]:
+        prov_first = (cell.get("provenance") or "").split("-", 1)[0].split(" ", 1)[0].strip().lower()
+        prov_cls = prov_first if prov_first in ("measured", "observed", "priors") else ""
         rows.append(
             f"<tr data-lane='{_esc(cell['lane'])}' data-arm='{_esc(cell['arm'])}'>"
             f"<td>{_esc(cell['lane'])}</td>"
-            f"<td class='wrap'>{_esc(cell['provenance'])}</td>"
-            f"<td>{_esc(cell['arm'])}</td>"
+            f"<td><span class='prov{(' prov-' + prov_cls) if prov_cls else ''}'>"
+            f"{_esc(prov_first or cell.get('provenance') or '?')}</span></td>"
+            f"<td class='mono'>{_esc(cell['arm'])}</td>"
             f"<td>{cell['n']}</td>"
             f"<td class='pass'>{cell['pass']}</td>"
             f"<td class='fail'>{cell['fail']}</td>"
@@ -257,12 +364,14 @@ def _methods_section(data: dict[str, Any]) -> str:
 
 def _sessions_data(db_path: Path, per_train_ids: dict[str, set[str]],
                    trains: Path | None,
-                   sidecar_cost: dict[str, float] | None = None) -> dict[str, Any]:
+                   sidecar_cost: dict[str, float] | None = None,
+                   sidecar_meta: dict[str, dict[str, str]] | None = None
+                   ) -> dict[str, Any]:
     """JSON-able session-store half of the data model.
 
     ``sidecar_cost`` (demo mode, no state.db): session_id -> cost from the
     dispatch sidecars, so the sessions section still shows real-looking
-    per-run spend.
+    per-run spend. ``sidecar_meta``: session_id -> model/effort for the strip.
     """
     if not db_path.exists() and sidecar_cost:
         out = {"present": True, "trains": [], "source": "dispatch sidecars"}
@@ -274,8 +383,14 @@ def _sessions_data(db_path: Path, per_train_ids: dict[str, set[str]],
                 if cost is None:
                     continue
                 total += float(cost)
+                meta = (sidecar_meta or {}).get(sid) or {}
                 sessions.append({"id": sid, "title": "dispatched worker (demo)",
-                                 "model": "", "started": "", "duration": "-",
+                                 "model": meta.get("model") or "",
+                                 "effort": meta.get("effort") or "",
+                                 "started": datetime.fromtimestamp(
+                                     time.time() - 3600).strftime(
+                                     "%Y-%m-%d %H:%M"),
+                                 "duration": "-",
                                  "messages": 0, "tools": 0, "tokens_in": 0,
                                  "tokens_out": 0,
                                  "cost_usd": round(float(cost), 2)})
@@ -562,8 +677,10 @@ def _data_model(trains: Path | None, factory_json: str | None,
     ledger = _ledger_data(ledger_records)
     trains_data = _trains_data(trains)
     sidecar_cost: dict[str, float] | None = None
+    sidecar_meta: dict[str, dict[str, str]] | None = None
     if is_demo:
         sidecar_cost = {}
+        sidecar_meta = {}
         for train in trains_data["trains"]:
             for brief in train["briefs"]:
                 run = _latest_run(
@@ -572,14 +689,18 @@ def _data_model(trains: Path | None, factory_json: str | None,
                 if run and run.get("session_id") and run.get("estimated_cost_usd"):
                     sidecar_cost[str(run["session_id"])] = \
                         float(run["estimated_cost_usd"])
+                if run and run.get("session_id"):
+                    sidecar_meta[str(run["session_id"])] = {
+                        "model": str(run.get("model") or ""),
+                        "effort": str(run.get("effort") or "")}
     sessions = _sessions_data(
         hermes_home() / "state.db",
         {t["name"]: {b["session_id"] for b in t["briefs"]
                      if b["session_id"]}
          for t in trains_data["trains"]},
-        trains, sidecar_cost=sidecar_cost)
+        trains, sidecar_cost=sidecar_cost, sidecar_meta=sidecar_meta)
     drift = _drift_data(factory_json if not is_demo else None)
-    return {
+    out = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "evalroute_version": routing._lib_version(),
         "table": routing._table_line(),
@@ -595,12 +716,20 @@ def _data_model(trains: Path | None, factory_json: str | None,
         "sessions": sessions,
         "trains": trains_data,
         "drift": drift,
+        "now": _now_strip_data({"routes": ledger["routes"],
+                                "pending": ledger["pending"],
+                                "outcome_rows": ledger["outcome_rows"],
+                                "sessions": sessions}),
     }
+    return out
 
 
 def _render(trains: Path | None, factory_json: str | None, command: str,
-            is_demo: bool = False) -> str:
+            is_demo: bool = False, theme: str = "dark") -> str:
     data = _data_model(trains, factory_json, is_demo)
+    theme_name = theme if theme in _THEMES else "dark"
+    palette = _THEMES[theme_name]
+    css = _CSS.substitute(**palette, mono=_MONO)
     ledger = {"pending": data["pending"], "outcome_rows": data["outcome_rows"],
               "tally": data["tally"], "methods": data["methods"]}
 
@@ -622,8 +751,11 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
              "padding:0.15rem 0.5rem;border-radius:3px;font-size:0.8rem;"
              "font-weight:700'>DEMO DATA — synthetic fixture, never your "
              "ledger</p>") if is_demo else ""
-    return _PAGE.substitute(header=_esc(header) + badge, body=body,
-                            footer=_esc(command))
+    now_json = _now_strip_data(data)
+    return _PAGE.substitute(header=_esc(header) + badge,
+                            style=css,
+                            nowstrip=_now_strip(data),
+                            body=body, footer=_esc(command))
 
 
 def _command_line(args: Any, out_path: Path, trains: Path | None,
@@ -658,8 +790,10 @@ def run(args: Any) -> int:
 
     def _write() -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(_render(trains, factory_json, command, is_demo),
-                            encoding="utf-8")
+        out_path.write_text(
+            _render(trains, factory_json, command, is_demo,
+                    getattr(args, "theme", None) or "dark"),
+            encoding="utf-8")
 
     if not watch:
         if getattr(args, "json", False):
