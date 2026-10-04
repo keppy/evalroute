@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-10-04
 
 ### Added
 
@@ -21,7 +21,10 @@
   `contributed/` tree into `observed N tasks across K contributors,
   single-arm, pass R%` rows. Invariant, enforced by test:
   `merge_contributed` changes nothing on measured lanes and never introduces
-  a model the table doesn't already know.
+  a model the table doesn't already know. Pooled evidence is credited only to
+  the arm the contributor says they actually ran — rows with an unstated or
+  unknown arm are dropped and counted, never re-attributed to the routed arm —
+  and a lane's observed row is built from outcomes on its own arm only.
 - `sync --with-contributed`: also downloads the `contributed/` tree
   (read-only). `publish_dataset.py` includes `contributed/` when present and
   counts it in `routes/MANIFEST.json`.

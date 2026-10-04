@@ -15,4 +15,4 @@ try:
     from importlib.metadata import version as _version
     __version__ = _version("evalroute")
 except Exception:  # pragma: no cover - running from a checkout, not installed
-    __version__ = "0.7.1"
+    __version__ = "0.8.0"
