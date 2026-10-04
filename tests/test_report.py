@@ -268,5 +268,6 @@ def test_report_footer_carries_command(world):
 def test_report_header_meta(world):
     _, html_text = _run_report(world)
     assert "ledger:" in html_text
-    assert "evalroute 0.6" in html_text
+    from evalroute.routing import _lib_version
+    assert f"evalroute {_lib_version()}" in html_text
     assert "table:" in html_text

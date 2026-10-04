@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.2] - 2026-10-04
+
+### Fixed
+
+- Standalone console script on Windows resolves the home to `%LOCALAPPDATA%\hermes`
+  (Hermes's own default) when neither `EVALROUTE_HOME`/`HERMES_HOME` nor
+  `hermes_constants` is available, instead of silently keeping a second ledger in
+  `~/.hermes`. A legacy `~/.hermes` that already exists is kept. `uv tool install
+  evalroute` and the Hermes plugin now share one ledger on Windows.
+
 ## [0.8.1] - 2026-10-04
 
 ### Added

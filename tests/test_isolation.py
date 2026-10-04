@@ -101,3 +101,26 @@ def test_importable_hermes_constants_used_when_no_env(tmp_path, monkeypatch):
     const_home = tmp_path / "const"
     _fake_hermes_constants(tmp_path, monkeypatch, str(const_home))
     assert flywheel.labels_path().is_relative_to(const_home)
+
+
+def test_platform_default_home_matches_hermes(tmp_path, monkeypatch):
+    """No env, no hermes_constants: Windows -> %LOCALAPPDATA%\hermes (if it exists),
+    elsewhere ~/.hermes — the same place Hermes itself keeps the ledger."""
+    from evalroute import paths
+    monkeypatch.setitem(sys.modules, "hermes_constants", None)
+    monkeypatch.delenv("EVALROUTE_HOME", raising=False)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: tmp_path / "userhome"))
+    monkeypatch.setattr(paths.os, "name", "nt")
+    local = tmp_path / "LocalAppData"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    # neither exists yet -> Hermes's Windows default
+    assert paths.hermes_home() == local / "hermes"
+    # only a legacy ~/.hermes exists -> keep using it (no silent ledger split)
+    (tmp_path / "userhome" / ".hermes").mkdir(parents=True)
+    assert paths.hermes_home() == tmp_path / "userhome" / ".hermes"
+    # the real Hermes home exists -> it wins
+    (local / "hermes").mkdir(parents=True)
+    assert paths.hermes_home() == local / "hermes"
+    monkeypatch.setattr(paths.os, "name", "posix")
+    assert paths.hermes_home() == tmp_path / "userhome" / ".hermes"

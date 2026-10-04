@@ -20,4 +20,12 @@ def hermes_home() -> Path:
         from hermes_constants import get_hermes_home
         return Path(get_hermes_home())
     except Exception:
-        return Path.home() / ".hermes"
+        pass
+    # Hermes's own platform default: %LOCALAPPDATA%\hermes on Windows, ~/.hermes
+    # elsewhere. Without this the standalone console script on Windows kept a
+    # second ledger in ~/.hermes and never saw the plugin's routes.
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        win = Path(os.environ["LOCALAPPDATA"]) / "hermes"
+        if win.exists() or not (Path.home() / ".hermes").exists():
+            return win
+    return Path.home() / ".hermes"
