@@ -78,7 +78,31 @@ def _validate_staged(dir_path: Path) -> dict[str, Any]:
     return {"manifest": manifest, "lanes": lanes}
 
 
-def sync(revision: str | None = None) -> int:
+def _table_state() -> dict[str, Any]:
+    """Active-table snapshot for both the human lines and `sync --json`."""
+    sha = _current_sha()
+    if sha:
+        path = dataset_root() / sha / "routes" / "routes.yaml"
+        active = "dataset"
+    else:
+        path = Path(tools.ROUTES_FILE)
+        active = "bundled"
+    lanes = tools._load_routes()
+    measured = sum(1 for l in lanes
+                   if str(l.get("provenance", "")).startswith("measured"))
+    return {"active": active, "sha": sha, "path": str(path),
+            "lanes": len(lanes), "measured": measured}
+
+
+def _print_table_state(state: dict[str, Any]) -> None:
+    if state["sha"]:
+        print(f"active table: dataset @ {state['sha'][:12]}")
+    else:
+        print("active table: bundled")
+    print(f"path: {state['path']}")
+
+
+def sync(revision: str | None = None, as_json: bool = False) -> int:
     """Download and pin a route-table revision. Only network-touching path."""
     hf = _load_hf()
     if hf is None:
@@ -107,6 +131,10 @@ def sync(revision: str | None = None) -> int:
     (dataset_root() / "current").parent.mkdir(parents=True, exist_ok=True)
     (dataset_root() / "current").write_text(sha + "\n", encoding="utf-8")
     tools.reset_routes_cache()  # the table just changed; re-resolve on next route
+    if as_json:
+        state = _table_state()
+        print(json.dumps(state))
+        return 0
     lanes = tools._load_routes()
     n_measured = sum(1 for l in lanes
                      if str(l.get("provenance", "")).startswith("measured"))
@@ -119,33 +147,35 @@ def sync(revision: str | None = None) -> int:
     return 0
 
 
-def status() -> int:
+def status(as_json: bool = False) -> int:
     """Which table is active; never touches the network or huggingface_hub."""
-    sha = _current_sha()
-    if sha:
-        print(f"active table: dataset @ {sha[:12]}")
-        print(f"path: {dataset_root() / sha / 'routes' / 'routes.yaml'}")
-    else:
-        print("active table: bundled")
-        print(f"path: {tools.ROUTES_FILE}")
+    state = _table_state()
+    if as_json:
+        print(json.dumps(state))
+        return 0
+    _print_table_state(state)
     return 0
 
 
-def clear() -> int:
+def clear(as_json: bool = False) -> int:
     """Unpin the dataset table; the bundled table routes again."""
     p = dataset_root() / "current"
     if p.exists():
         p.unlink()
     tools.reset_routes_cache()
     tools._load_routes()  # re-resolve against the bundled table
+    if as_json:
+        print(json.dumps(_table_state()))
+        return 0
     print("active table: bundled")
     return 0
 
 
 def run(args: Any) -> int:
     """argparse entry for `hermes evalroute sync`."""
+    as_json = bool(getattr(args, "json", False))
     if getattr(args, "status", False):
-        return status()
+        return status(as_json)
     if getattr(args, "clear", False):
-        return clear()
-    return sync(getattr(args, "revision", None))
+        return clear(as_json)
+    return sync(getattr(args, "revision", None), as_json)

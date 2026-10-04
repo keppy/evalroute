@@ -63,6 +63,7 @@ def read_labels() -> list[dict[str, Any]]:
 # ------------------------------------------------- in-process correlation
 
 _MEMORY: dict[str, Any] = {"route": None, "turn": None}
+_LAST_RATE: dict[str, Any] = {"logged": False}  # structured result of the last handle_rate
 
 def _pending_routes(records: list[dict[str, Any]]):
     """UUID consumption for new rows; timestamp fallback for legacy rows."""
@@ -216,7 +217,14 @@ _RATINGS = {"pass", "fail", "p", "f", "skip"}
 
 
 def handle_rate(raw_args: str) -> str:
-    """Rate a selected route, or the profile's latest pending route."""
+    """Rate a selected route, or the profile's latest pending route.
+
+    Also stashes the structured result in ``_LAST_RATE`` for `rate --json`
+    (keys: logged, verdict, route_id, lane, model, effort, arm_attribution,
+    message). Not thread-safe beyond the CLI's single-threaded use.
+    """
+    global _LAST_RATE
+    _LAST_RATE = {"logged": False}
     args = (raw_args or "").split()
     if not args or args[0].lower() not in _RATINGS:
         return ("usage: /rate pass|fail|skip [--route-id <id>] [--lane <lane-id>] "
@@ -250,12 +258,21 @@ def handle_rate(raw_args: str) -> str:
 
     route = _route_by_id(route_id) if route_id else _last_route()
     if route is None:
-        return "evalroute: no route on record yet (or route ID already consumed/unknown) - run /route <task> first; nothing rated."
+        message = ("evalroute: no route on record yet (or route ID already consumed/unknown) "
+                   "- run /route <task> first; nothing rated.")
+        _LAST_RATE = {"logged": False, "verdict": rating, "route_id": route_id,
+                      "lane": "", "model": "", "effort": "",
+                      "arm_attribution": "unknown", "message": message}
+        return message
     if rating == "skip":
         _append({"kind": "outcome", "rated": "skip", "route_lane": route.get("lane"),
                  "consumes": route.get("ts"), "consumes_id": route.get("id"), "note": note[:300]})
         _MEMORY["route"] = None  # skip consumes the route so the next /rate doesn't re-file it
-        return "route skipped (no verdict); the pending route was consumed."
+        _LAST_RATE = {"logged": True, "verdict": "skip", "route_id": route.get("id"),
+                      "lane": route.get("lane"), "model": confirmed_model,
+                      "effort": confirmed_effort, "arm_attribution": "unknown",
+                      "message": "route skipped (no verdict); the pending route was consumed."}
+        return _LAST_RATE["message"]
 
     # Process-global command observations are diagnostics, never an actual arm.
     # Only an explicit user-provided model *and* effort count as self-reported
@@ -283,15 +300,21 @@ def handle_rate(raw_args: str) -> str:
     _MEMORY["route"] = None  # outcome consumes the pending route
 
     confirm = _pending_label(route, confirmed_model)
+    _LAST_RATE = {"logged": True, "verdict": rating, "route_id": route.get("id"),
+                  "lane": record["route_lane"], "model": confirmed_model,
+                  "effort": confirmed_effort,
+                  "arm_attribution": record["arm_attribution"], "message": ""}
     if lane_fix:
         _append({"kind": "lane_correction", "from_lane": route.get("lane"),
                  "to_lane": lane_fix, "task": route.get("task", "")[:200]})
-        return (f"logged: {rating} (lane corrected {route.get('lane')} -> {lane_fix}). "
+        _LAST_RATE["message"] = (f"logged: {rating} (lane corrected {route.get('lane')} -> {lane_fix}). "
                 "The correction also feeds the classifier's keyword table.\n" + confirm)
+        return _LAST_RATE["message"]
     arm = f"{confirmed_model or 'unknown'} @ {confirmed_effort or '?'}"
     attribution = "user-confirmed (observational)" if confirmed_model else "unknown; switches unverified"
-    return (f"logged: {rating} for lane {route.get('lane')} (arm {arm}; {attribution}). "
+    _LAST_RATE["message"] = (f"logged: {rating} for lane {route.get('lane')} (arm {arm}; {attribution}). "
             f"{confirm}. {_counts_summary()}")
+    return _LAST_RATE["message"]
 
 
 def _counts_summary() -> str:

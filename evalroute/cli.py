@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from . import dataset, dispatch, flywheel, report
 from .routing import _route_for_args, _tool_result, install_routes
@@ -45,6 +46,8 @@ def setup_cli(subparser) -> None:
     rate_p.add_argument("--model", help="Confirm the actual arm's model id (diagnostic; with --effort)")
     rate_p.add_argument("--effort", help="Confirm the actual arm's effort (diagnostic; with --model)")
     rate_p.add_argument("--note", help="Why — the highest-value part of the label")
+    rate_p.add_argument("--json", action="store_true",
+                        help="Print {\"logged\": ...} JSON instead of the human line")
     install_p = subs.add_parser("install-routes", help="Write the route table's effort "
                                    "column into agent.reasoning_overrides")
     install_p.add_argument("--dry-run", action="store_true", help="Show the diff, write nothing")
@@ -56,6 +59,8 @@ def setup_cli(subparser) -> None:
                           help="Show which route table is active; no network")
     status_p.add_argument("--clear", action="store_true",
                           help="Unpin the dataset table; route on the bundled table")
+    status_p.add_argument("--json", action="store_true",
+                          help="Print the active-table state as JSON")
     dispatch_p = subs.add_parser("dispatch",
                                  help="Route a brief, spawn hermes chat on that arm, "
                                       "print the rate line",
@@ -74,10 +79,19 @@ def setup_cli(subparser) -> None:
                                  "session store to stderr while it runs")
     dispatch_p.add_argument("--dry-run", action="store_true",
                             help="Route and print the argv; spawn nothing")
+    dispatch_p.add_argument("--runner", help="Named runner (hermes) or a shell-style "
+                            "template with {model} {effort} {provider} {brief} {indir} "
+                            "{brief_text} placeholders (default: EVALROUTE_RUNNER or hermes)")
+    dispatch_p.add_argument("--json", action="store_true",
+                            help="Print the dispatch sidecar object as JSON on stdout "
+                                 "(the card still goes to stderr)")
     report_p = subs.add_parser("report",
                                help="Render one static HTML page over the ledger, "
                                     "sessions, trains, and drift findings")
     report_p.add_argument("--out", help="Output path (default: <home>/evalroute/report.html)")
+    report_p.add_argument("--json", action="store_true",
+                          help="Print the report's data model as JSON instead of "
+                               "writing HTML")
     report_p.add_argument("--open", action="store_true",
                           help="Open the rendered page in the default browser")
     report_p.add_argument("--watch", type=float, metavar="SECONDS",
@@ -100,6 +114,7 @@ def evalroute_cli(args) -> int:
     if action == "report":
         return report.run(args)
     if action == "rate":
+        as_json = bool(getattr(args, "json", False))
         parts = [getattr(args, "verdict", None) or ""]
         if getattr(args, "lane", None):
             parts.append(f"--lane {args.lane}")
@@ -111,7 +126,17 @@ def evalroute_cli(args) -> int:
             parts.append(f"--effort {args.effort}")
         if getattr(args, "note", None):
             parts.append(f"--note {args.note}")
-        print(flywheel.handle_rate(" ".join(parts)))
+        message = flywheel.handle_rate(" ".join(parts))
+        if as_json:
+            data = dict(getattr(flywheel, "_LAST_RATE", {}) or {})
+            data.setdefault("logged", False)
+            data["message"] = message
+            for key in ("verdict", "route_id", "lane", "model", "effort",
+                        "arm_attribution"):
+                data.setdefault(key, None)
+            print(json.dumps(data))
+        else:
+            print(message)
         return 0
     if action == "route":
         task = " ".join(getattr(args, "task", []) or [])
