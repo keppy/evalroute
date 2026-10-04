@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -142,22 +143,146 @@ def _observed_row(lane_id: str, stats: dict, prev: dict[str, Any], date: str) ->
 
 def merge_observed(routes_path: Path, labels: list[dict[str, Any]]) -> tuple[list[dict], int]:
     """Apply observed rows to a routes table; measured rows are never overwritten."""
+    stats = aggregate(labels)
+    return _merge_with_stats(routes_path, stats, existing_lanes_only=False)
+
+
+def _merge_with_stats(routes_path: Path, stats: dict,
+                      existing_lanes_only: bool) -> tuple[list[dict], int]:
     raw = yaml.safe_load(routes_path.read_text(encoding="utf-8")) or {}
     existing = {l["id"]: l for l in (raw.get("lanes") or []) if isinstance(l, dict) and l.get("id")}
-    stats = aggregate(labels)
     date = datetime.date.today().isoformat()
     out: list[dict] = []
     applied = 0
     seen: set[str] = set()
     for lane_id, lstats in sorted(stats["lanes"].items()):
-        if not lane_id.startswith("("):  # (unknown) has no table row
-            prev = existing.get(lane_id, {})
-            if str(prev.get("provenance", "")).startswith("measured"):
-                out.append(dict(prev))  # measured wins; observed does not overwrite
-            else:
-                out.append(_observed_row(lane_id, lstats, prev, date))
-                applied += 1
-            seen.add(lane_id)
+        if lane_id.startswith("("):  # (unknown) has no table row
+            continue
+        prev = existing.get(lane_id, {})
+        if existing_lanes_only and lane_id not in existing:
+            continue  # contributed rows cannot mint lanes
+        if str(prev.get("provenance", "")).startswith("measured"):
+            out.append(dict(prev))  # measured wins; observed does not overwrite
+        else:
+            out.append(_observed_row(lane_id, lstats, prev, date))
+            applied += 1
+        seen.add(lane_id)
+    for lane_id, prev in existing.items():
+        if lane_id not in seen:
+            out.append(dict(prev))
+    return out, applied
+
+
+def aggregate_contributed(rows: list[dict[str, Any]],
+                          known_models: Optional[set[str]] = None,
+                          max_age_days: int = MAX_STALE_DAYS) -> dict:
+    """Per-lane arm statistics over REDACTED contributed rows (schema 1).
+
+    Same shape as aggregate(), but keyed by ``route_lane`` and staleness by
+    ISO ``week`` instead of ``ts``. ``known_models`` (the models already in
+    the routes table) filters arms: a pool of contributed rows must never be
+    able to mint a model the table has never heard of. Rows may carry a
+    ``_contributor`` tag (injected by the loader); the count of distinct
+    tags is K in "across K contributors".
+    """
+    today = datetime.date.today()
+    oldest = today - datetime.timedelta(days=max_age_days)
+    contributors: set[str] = set()
+    weeks: list[str] = []
+    lanes: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: dict(attempts=0, passes=0,
+                                                   fails=0, escalations=0)))
+    dropped = {"stale": 0, "unknown_arm": 0}
+    for row in rows:
+        if row.get("kind") != "outcome" or row.get("rated") not in ("pass", "fail"):
+            continue
+        contributors.add(row.get("_contributor") or "(unknown)")
+        try:
+            year, wk = str(row.get("week", "")).split("-W")
+            week_start = datetime.date.fromisocalendar(int(year), int(wk), 1)
+        except Exception:
+            continue
+        if week_start < oldest:  # week granularity; a week straddling the cutoff is kept
+            dropped["stale"] += 1
+            continue
+        weeks.append(row["week"])
+        lane = row.get("route_lane") or "(unknown)"
+        if (row.get("arm_attribution") == "explicit_user"
+                and row.get("actual_model") and row.get("actual_effort")
+                and (known_models is None or row["actual_model"] in known_models)):
+            arm_key = f'{row["actual_model"]}@{row["actual_effort"]}'
+        else:
+            if row.get("actual_model") and known_models is not None \
+                    and row["actual_model"] not in known_models:
+                dropped["unknown_arm"] += 1
+            arm_key = f'{row.get("route_model") or "?"}@{row.get("route_effort") or "?"}'
+            if known_models is not None and not str(row.get("route_model") or "") in known_models:
+                arm_key = "?@?"
+                dropped["unknown_arm"] += 1
+        arm = lanes[lane][arm_key]
+        arm["attempts"] += 1
+        if row.get("rated") == "pass":
+            arm["passes"] += 1
+        else:
+            arm["fails"] += 1
+    lane_stats = {
+        lane: {
+            "arms": {k: dict(v) for k, v in sorted(arms.items())},
+            "outcomes": sum(a["attempts"] for a in arms.values()),
+            "pass_rate": (sum(a["passes"] for a in arms.values())
+                          / max(1, sum(a["attempts"] for a in arms.values()))),
+        }
+        for lane, arms in lanes.items()
+    }
+    return {
+        "outcomes": sum(ls["outcomes"] for ls in lane_stats.values()),
+        "contributors": sorted(contributors),
+        "n_contributors": len(contributors),
+        "weeks": sorted(set(weeks)),
+        "lanes": lane_stats,
+        "dropped": dropped,
+        "stale_cutoff_days": max_age_days,
+    }
+
+
+def merge_contributed(routes_path: Path, rows: list[dict[str, Any]]) -> tuple[list[dict], int]:
+    """Observed rows from pooled contributed rows; measured lanes are never
+    touched and no unknown model or lane can be introduced. Invariant test,
+    not just a docstring: tests/test_contribute.py::test_merge_invariant."""
+    raw = yaml.safe_load(routes_path.read_text(encoding="utf-8")) or {}
+    existing = {l["id"]: l for l in (raw.get("lanes") or []) if isinstance(l, dict) and l.get("id")}
+    known_models = {l.get("model") for l in existing.values() if l.get("model")}
+    stats = aggregate_contributed(rows, known_models=known_models)
+    date = datetime.date.today().isoformat()
+    out: list[dict] = []
+    applied = 0
+    seen: set[str] = set()
+    k = stats["n_contributors"]
+    for lane_id, lstats in sorted(stats["lanes"].items()):
+        if lane_id.startswith("(") or lane_id not in existing:
+            continue
+        prev = existing[lane_id]
+        if str(prev.get("provenance", "")).startswith("measured"):
+            out.append(dict(prev))  # observed cannot overwrite measured
+        else:
+            row = dict(prev)
+            n = lstats["outcomes"]
+            pr = lstats["pass_rate"]
+            weeks = stats["weeks"]
+            span = f" ({weeks[0]}..{weeks[-1]})" if weeks else ""
+            row["provenance"] = (f"observed {n} tasks across {k} contributors, single-arm, "
+                                 f"pass {pr:.0%}{span}, {date}; not independent trials "
+                                 "or a controlled comparison")
+            try:
+                from . import adjudicate
+            except ImportError:
+                import adjudicate  # type: ignore
+            passes = sum(a["passes"] for a in lstats["arms"].values())
+            verdict = adjudicate.observed_verdict(passes, n)
+            if verdict:
+                row["provenance"] = f'{row["provenance"]}; {verdict}'
+            out.append(row)
+            applied += 1
+        seen.add(lane_id)
     for lane_id, prev in existing.items():
         if lane_id not in seen:
             out.append(dict(prev))
@@ -170,7 +295,37 @@ def main(argv=None) -> int:
     ap.add_argument("--apply", action="store_true",
                     help="write data/routes.observed.yaml (observed rows only where not measured)")
     ap.add_argument("--routes", default=str(here / "data" / "routes.yaml"))
+    ap.add_argument("--contributed", dest="contributed_dir",
+                    help="A synced contributed/ tree: pool every *.jsonl under it "
+                         "(contributed/<contributor>/<ts>.jsonl) into observed rows "
+                         "instead of reading the local ledger")
     a = ap.parse_args(argv)
+    if a.contributed_dir:
+        root = Path(a.contributed_dir)
+        files = sorted(root.rglob("*.jsonl"))
+        if not files:
+            print(f"no *.jsonl under {root} (sync with --with-contributed first)")
+            return 1
+        rows: list[dict[str, Any]] = []
+        for p in files:
+            contributor = p.parent.name if p.parent != root else "(root)"
+            for line in p.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    r = json.loads(line)
+                    r["_contributor"] = contributor
+                    rows.append(r)
+        stats = aggregate_contributed(rows)
+        lanes, applied = merge_contributed(Path(a.routes), rows)
+        print(f"{stats['outcomes']} contributed outcomes across "
+              f"{stats['n_contributors']} contributors "
+              f"({', '.join(stats['contributors'])}; dropped: "
+              f"{stats['dropped']['stale']} stale, {stats['dropped']['unknown_arm']} unknown-arm)")
+        for lane, ls in sorted(stats["lanes"].items()):
+            print(f"\nlane: {lane}   ({ls['outcomes']} outcomes, pass {ls['pass_rate']:.0%})")
+            for arm, astat in ls["arms"].items():
+                print(f"  {arm:<40} {astat['attempts']} tries, {astat['passes']} pass, {astat['fails']} fail")
+        print(f"\n{applied} pooled observed rows applied (measured lanes untouched)")
+        return 0
     labels = flywheel.read_labels()
     if not labels:
         print("no labels yet - run /route and /rate in your daily sessions; "

@@ -102,7 +102,8 @@ def _print_table_state(state: dict[str, Any]) -> None:
     print(f"path: {state['path']}")
 
 
-def sync(revision: str | None = None, as_json: bool = False) -> int:
+def sync(revision: str | None = None, as_json: bool = False,
+         with_contributed: bool = False) -> int:
     """Download and pin a route-table revision. Only network-touching path."""
     hf = _load_hf()
     if hf is None:
@@ -119,9 +120,12 @@ def sync(revision: str | None = None, as_json: bool = False) -> int:
     tools._load_routes()  # resolve the currently active table for the "was" line
     was = _active_label()
     try:
+        patterns = ["routes/*", "README.md"]
+        if with_contributed:
+            patterns.append("contributed/*/*")  # contributed/<contributor>/<ts>.jsonl
         hf.snapshot_download(repo_id=REPO_ID, repo_type="dataset", revision=sha,
-                              allow_patterns=["routes/*", "README.md"],
-                              local_dir=target)
+                             allow_patterns=patterns,
+                             local_dir=target)
         staged = _validate_staged(target)
     except Exception as exc:
         shutil.rmtree(target, ignore_errors=True)  # never leave a partial dir
@@ -145,6 +149,29 @@ def sync(revision: str | None = None, as_json: bool = False) -> int:
           f"{str(manifest.get('plugin_commit', ''))[:7]})")
     print(f"active table: dataset (was: {was})")
     return 0
+
+
+def contributed_rows(sha: str | None = None) -> list[dict[str, Any]]:
+    """Every row from every contributor JSONL under the pinned revision.
+
+    Each row gains a ``_contributor`` key (its directory name); the pooler
+    uses it to count contributors, and it is never treated as a ledger key.
+    Read-only: this only reads what ``sync --with-contributed`` downloaded.
+    """
+    sha = sha or _current_sha()
+    if not sha:
+        return []
+    root = dataset_root() / sha / "contributed"
+    out: list[dict[str, Any]] = []
+    for p in sorted(root.glob("*/*.jsonl")):
+        contributor = p.parent.name
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            row["_contributor"] = contributor
+            out.append(row)
+    return out
 
 
 def status(as_json: bool = False) -> int:
@@ -178,4 +205,5 @@ def run(args: Any) -> int:
         return status(as_json)
     if getattr(args, "clear", False):
         return clear(as_json)
-    return sync(getattr(args, "revision", None), as_json)
+    return sync(getattr(args, "revision", None), as_json,
+                with_contributed=bool(getattr(args, "with_contributed", False)))

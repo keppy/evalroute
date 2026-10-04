@@ -57,7 +57,7 @@ def _copy(src: Path, dst: Path) -> None:
     shutil.copyfile(src, dst)
 
 
-def build_staging(staging: Path) -> dict:
+def build_staging(staging: Path, contributed_dir: Path | None = None) -> dict:
     """Materialize the dataset layout; returns the MANIFEST dict."""
     for lane in LANES:
         src = ARTIFACTS / f"tier-a-{lane}"
@@ -67,6 +67,15 @@ def build_staging(staging: Path) -> dict:
         _copy(ARTIFACTS / name, staging / "measured" / "models" / name)
     (staging / "routes").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(REPO_ROOT / "data" / "routes.yaml", staging / "routes" / "routes.yaml")
+
+    # contributed/: opt-in, redacted outcome rows, curated by hand into
+    # contributed/<contributor>/<ts>.jsonl in the repo (or --contributed DIR).
+    contributed_files: list[str] = []
+    if contributed_dir and contributed_dir.exists():
+        for src in sorted(contributed_dir.rglob("*.jsonl")):
+            rel = src.relative_to(contributed_dir)
+            _copy(src, staging / "contributed" / rel)
+            contributed_files.append((staging / "contributed" / rel).as_posix())
 
     measured_files = sorted(
         p.relative_to(staging).as_posix().replace("\\", "/")
@@ -78,14 +87,16 @@ def build_staging(staging: Path) -> dict:
         "measured_sha256": {rel: _sha256(staging / rel) for rel in measured_files},
         "generated": date.today().isoformat(),
     }
+    if contributed_files:
+        manifest["contributed_files"] = len(contributed_files)
     (staging / "routes" / "MANIFEST.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (staging / "README.md").write_text(_dataset_card(), encoding="utf-8")
+    (staging / "README.md").write_text(_dataset_card(bool(contributed_files)), encoding="utf-8")
     return manifest
 
 
-def _dataset_card() -> str:
-    return """\
+def _dataset_card(contributed: bool = False) -> str:
+    front = f"""\
 ---
 license: mit
 pretty_name: evalroute flywheel
@@ -101,8 +112,13 @@ configs:
   data_files:
   - split: train
     path: routes/routes.yaml
----
-
+{f'''- config_name: contributed
+  data_files:
+  - split: train
+    path: contributed/*/*.jsonl
+''' if contributed else ''}---
+"""
+    return front + f"""\
 # evalroute flywheel
 
 Evidence behind the [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute)
@@ -115,14 +131,16 @@ route table.
 - **routes** — the generated `routes.yaml`, produced by `routes_from_report.py`
   from `measured` at the plugin commit named in `routes/MANIFEST.json`
   (`plugin_commit`; `routes_sha256` pins the table bytes).
-
+{f'''- **contributed** — redacted outcome rows from opted-in installs, one JSONL
+  file per upload under `contributed/<contributor>/`. Whitelist-redacted by
+  `evalroute contribute --dry-run` (lane, arms, verdict, week, HMAC task
+  hash — never task text, notes, or paths); by construction it can never
+  become `measured` — observational data can contest a priors lane, never
+  overwrite a measured one.
+''' if contributed else ''}
 Provenance labels used by the route table: `measured` (harness run, coverage
 and $/success), `observed` (single-arm ledger stats, weaker by construction),
-`priors` (no data, human estimate). A `contributed` config (redacted,
-opt-in outcome rows) may be added later; by construction it can never become
-`measured` — observational data can contest a priors lane, never overwrite a
-measured one.
-"""
+`priors` (no data, human estimate)."""
 
 
 def _print_tree(staging: Path) -> None:
@@ -134,13 +152,19 @@ def _print_tree(staging: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo-id", default=DEFAULT_REPO_ID)
+    ap.add_argument("--contributed", type=Path,
+                    help="A contributed/ tree to include (default: REPO_ROOT/contributed "
+                         "when it exists); adds the contributed config and a "
+                         "contributed_files MANIFEST count")
     ap.add_argument("--dry-run", action="store_true",
                     help="Build the staging dir, print the tree + MANIFEST, upload nothing")
     args = ap.parse_args()
 
     staging = Path(tempfile.mkdtemp(prefix="evalroute-flywheel-"))
     try:
-        manifest = build_staging(staging)
+        contributed_dir = getattr(args, "contributed", None) or (
+            REPO_ROOT / "contributed" if (REPO_ROOT / "contributed").exists() else None)
+        manifest = build_staging(staging, contributed_dir)
         print(f"staging: {staging}")
         _print_tree(staging)
         print(json.dumps(manifest, indent=2))
