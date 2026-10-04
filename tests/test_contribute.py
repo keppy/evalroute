@@ -233,8 +233,13 @@ class FakeHfApi:
     def whoami(self):
         return {"name": "contributor-1"}
 
-    def upload_file(self, **kwargs):
-        type(self).calls.append(kwargs)
+    def upload_file(self, *, path_or_fileobj, path_in_repo, repo_id, repo_type, commit_message,
+                    token=None, revision=None):
+        # Keyword-only with the real HfApi.upload_file parameter names: a fake
+        # that took **kwargs let a misspelt argument reach production unseen.
+        type(self).calls.append(dict(path_or_fileobj=path_or_fileobj, path_in_repo=path_in_repo,
+                                     repo_id=repo_id, repo_type=repo_type,
+                                     commit_message=commit_message))
         return "cafe" * 10
 
 
@@ -259,8 +264,8 @@ def test_upload_matches_dry_run_bytes_advances_cursor(home, monkeypatch, capsys)
     assert "uploaded 2 rows" in out
     assert "contributor-1" in out and "cafe" * 10 in out
     call = FakeHfApi.calls[0]
-    assert call["path_or_path_in_repo"].startswith("contributed/contributor-1/")
-    assert call["path_or_path_in_repo"].endswith(".jsonl")
+    assert call["path_in_repo"].startswith("contributed/contributor-1/")
+    assert call["path_in_repo"].endswith(".jsonl")
     sent = [json.loads(l) for l in call["path_or_fileobj"].decode("utf-8").splitlines()]
     assert sent == payload_expected  # byte-for-byte the dry-run rows
     assert contribute.read_cursor() == BASE_TS + 70

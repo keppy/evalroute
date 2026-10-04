@@ -299,8 +299,8 @@ def _upload(api: Any, rows: list[dict[str, Any]], payload: bytes,
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path_in_repo = f"contributed/{who}/{ts}.jsonl"
     commit = api.upload_file(
-        path_or_path_in_repo=path_in_repo,
         path_or_fileobj=payload,
+        path_in_repo=path_in_repo,
         repo_id=repo_id,
         repo_type="dataset",
         commit_message=f"contribute {len(rows)} redacted outcome rows",
