@@ -1,0 +1,56 @@
+# Task facets: orthogonal dimensions a task can occupy simultaneously.
+# Lanes are the ROUTING decision (one arm); facets are the LABEL — what the
+# task actually is along each axis. A task may occupy one facet per axis.
+# Facets are descriptive labels only; the lane classifier chooses the arm.
+version: 1
+
+facets:
+  - id: long-doc
+    axis: input-shape
+    description: input-heavy reading over many pages/files before answering
+    lanes: [long-doc-reading]
+
+  - id: interactive
+    axis: input-shape
+    description: conversational or small-context work; no bulk reading required
+    lanes: []   # default when no long-doc signal; never route ON this facet
+
+  - id: domain-dlml
+    axis: domain
+    description: training/eval harness engineering, RL on reasoning, ML research judgment
+    lanes: [dl-ml-research-engineering]
+
+  - id: domain-alignment
+    axis: domain
+    description: alignment/safety reasoning, paper-claim critique
+    lanes: [alignment-reasoning]
+
+  - id: domain-math
+    axis: domain
+    description: first-principles math, proofs, derivations
+    lanes: [math-first-principles]
+
+  - id: domain-prose
+    axis: domain
+    description: writing quality is the deliverable
+    lanes: [prose]
+
+  - id: domain-research
+    axis: domain
+    description: web/literature research, source gathering
+    lanes: [web-research]
+
+  - id: tier-routine
+    axis: demand-tier
+    description: self-contained, well-specified work; retries are cheap
+    lanes: [routine-coding]
+
+  - id: tier-hard
+    axis: demand-tier
+    description: multi-step, multi-file, or judgment-heavy work where a miss is expensive
+    lanes: [hard-agentic-coding]
+
+  - id: tier-orchestration
+    axis: demand-tier
+    description: the work IS planning and delegation
+    lanes: [orchestration]

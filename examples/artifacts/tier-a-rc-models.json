@@ -1,0 +1,6 @@
+[
+  {"name": "ds-v4.1-flash@low", "api": "openai", "model": "deepseek/deepseek-v4.1-flash", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "low", "in": 0.07, "out": 0.30},
+  {"name": "ds-v4.1-flash@medium", "api": "openai", "model": "deepseek/deepseek-v4.1-flash", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "medium", "in": 0.07, "out": 0.30},
+  {"name": "glm-5.3-flash@low", "api": "openai", "model": "z-ai/glm-5.3-flash", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "low", "in": 0.12, "out": 0.40},
+  {"name": "glm-5.3-flash@medium", "api": "openai", "model": "z-ai/glm-5.3-flash", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "medium", "in": 0.12, "out": 0.40}
+]

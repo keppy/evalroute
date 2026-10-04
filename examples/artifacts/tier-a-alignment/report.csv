@@ -1,0 +1,6 @@
+lane,model,effort,n,pend,trunc,err,complete,expected,pass_,lo,hi,cov,passk,try_usd,succ_usd,vmin,allin,known,med_out,p50s
+alignment-reasoning,glm-5.3@medium,medium,30,0,0,0,True,30,1.0,1.0,1.0,1.0,1.0,0.011933187000000001,0.011933187000000001,0.0,0.011933187000000001,True,978.5,10.17
+alignment-reasoning,glm-5.3@high,high,30,0,0,0,True,30,1.0,1.0,1.0,1.0,1.0,0.013165302333333335,0.013165302333333335,0.0,0.013165302333333335,True,1557.0,14.945
+alignment-reasoning,kimi-k3@medium,medium,29,0,0,0,False,30,1.0,1.0,1.0,1.0,0.9,0.01624306448275862,0.01624306448275862,0.0,0.01624306448275862,True,636,11.43
+alignment-reasoning,kimi-k3@high,high,30,0,0,0,True,30,1.0,1.0,1.0,1.0,1.0,0.026400823,0.026400823,0.0,0.026400823,True,1441.5,34.95
+alignment-reasoning,qwen3.8-max@medium,medium,0,30,0,0,False,30,nan,nan,nan,0.0,0.0,0.014843999999999998,inf,nan,inf,True,2387.0,61.765

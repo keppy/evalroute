@@ -1,0 +1,224 @@
+version: 1
+lanes:
+- id: alignment-reasoning
+  label: Alignment reasoning, paper claims
+  model: z-ai/glm-5.3
+  effort: medium
+  provenance: 'measured 10 tasks, cov 1.0, all-in $0.0119/succ, 2026-09-27; v1 runs omit model_id (mapped via models.json); gap vs
+    runner-up: 100.0% vs 100.0% (+0.0% [-33.4%, +33.4%], p=1.000) — not distinguishable
+    on 10 shared cases'
+  keywords:
+  - alignment
+  - reward hacking
+  - goodhart
+  - sycophancy
+  - mesa-optimization
+  - mesaoptimization
+  - outer alignment
+  - inner alignment
+  - interpretability
+  - paper claim
+  - rlhf
+  - rlaif
+  - constitutional
+  match_hint: reasoning about failure modes and paper claims
+  notes: 'Four of five evaluated arms have 30 judged samples each; qwen3.8-max@medium has 30 pending, not graded. No checker audit. The p=1 and zero-width empirical gap describe this ten-task sample, not population equivalence.'
+- id: routine-coding
+  label: Routine coding
+  model: z-ai/glm-5.3-flash
+  effort: medium
+  provenance: 'measured 10 tasks, cov 1.0, all-in $0.0001/succ, 2026-09-27; v1 runs omit model_id (mapped via models.json); gap vs
+    runner-up: 100.0% vs 100.0% (+0.0% [-33.4%, +33.4%], p=1.000) — not distinguishable
+    on 10 shared cases'
+  keywords:
+  - refactor
+  - lint
+  - unit test
+  - unit-test
+  - test
+  - typo
+  - bugfix
+  - bug fix
+  - script
+  - rename
+  - cleanup
+  - format
+  - boilerplate
+  - stub
+  - scaffold
+  - small function
+  - helper
+  match_hint: everyday code changes where a test or compiler checks the result
+  escalation: gpt-6-luna
+  notes: 'Verbose already; tests catch misses cheaply, so retries beat deep thinking. ds-v4.1-flash@medium had pass^k 1.00, but costs more; prefer when determinism matters. p=1 and a zero-width empirical gap at n=10 do not prove population equivalence.'
+- id: dl-ml-research-engineering
+  label: DL / ML research engineering
+  model: z-ai/glm-5.3
+  effort: high
+  provenance: 'measured 10 tasks, cov 1.0, all-in $0.0024/succ, 2026-09-27; v1 runs omit model_id (mapped via models.json); gap vs
+    runner-up: 100.0% vs 100.0% (+0.0% [-33.4%, +33.4%], p=1.000) — not distinguishable
+    on 10 shared cases'
+  keywords:
+  - training run
+  - fine-tune
+  - finetune
+  - finetuning
+  - grpo
+  - trl
+  - lora
+  - sft
+  - rl
+  - reward model
+  - loss curve
+  - gradient
+  - ablation
+  - hyperparameter
+  - hyperparameter
+  - overfitting
+  - checkpoint
+  - dataloader
+  - tokenizer
+  - distillation
+  - colocation
+  - colocate
+  match_hint: training/eval harness engineering
+  escalation: gpt-6-sol
+  notes: 'The ten-task p=1, zero-width empirical gap vs runner-up is not proof of population equivalence; this route is a cost choice on measured coverage.'
+- id: hard-agentic-coding
+  label: Hard agentic coding
+  keywords:
+  - hard agentic
+  - terminal-bench
+  - multi-file
+  - multi file
+  - repo-wide
+  - architecture
+  - migrate
+  - performance
+  - race condition
+  - deadlock
+  - memory leak
+  - integration
+  - e2e
+  - integration test
+  - flaky
+  - build failure
+  - build error
+  match_hint: multi-step repo work where a miss costs many tool-call rounds
+  model: z-ai/glm-5.3
+  effort: max
+  escalation: gpt-6-sol
+  provenance: priors 2026-09-26 (GLM 5.3 42% on TB 4.0 at max, Artificial Analysis)
+  notes: the 42% TB 4.0 figure was at max; escalate to GPT-6 Sol when coverage gaps
+- id: long-doc-reading
+  label: Long-doc reading, lit review
+  keywords:
+  - lit review
+  - literature
+  - paper summary
+  - summarize paper
+  - read paper
+  - long document
+  - long doc
+  - pdf
+  - survey
+  - spec review
+  - rfp
+  - due diligence
+  - technical report
+  match_hint: input-heavy extraction over many pages
+  model: z-ai/glm-5.3-flash
+  effort: medium
+  escalation: null
+  provenance: priors 2026-09-26 (V4.1 Flash AA-LCR 84%, on par with GPT-5.6 Sol)
+  notes: input-heavy; gap to closed ~none
+- id: web-research
+  label: Web research
+  keywords:
+  - web research
+  - browse
+  - search the web
+  - fact-check
+  - factcheck
+  - market research
+  - competitor
+  - news
+  - pricing
+  - sources
+  - citations
+  - open-source intelligence
+  - osint
+  match_hint: search-and-synthesize over live web content
+  model: moonshotai/kimi-k3
+  effort: medium
+  escalation: null
+  provenance: priors 2026-09-26 (K3 BrowseComp 91.2, vendor-reported, at max)
+  notes: input-heavy; max roughly triples output at $10.53/M so medium is the starting
+    arm
+- id: math-first-principles
+  label: Math, first principles
+  keywords:
+  - proof
+  - prove
+  - theorem
+  - derivation
+  - derive
+  - combinatorics
+  - algebraic
+  - calculus
+  - probability bound
+  - asymptotic
+  - complexity bound
+  - lemma
+  - math
+  - inequality
+  match_hint: correctness comes from reasoning, not from tools
+  model: qwen/qwen3.8-max
+  effort: max
+  escalation: gpt-6-sol
+  provenance: priors 2026-09-26 (Qwen3.8-Max MathArena 56% vs GPT-6 Sol 85%, Opus
+    5.5 83%)
+  notes: ~27-30 pts behind closed; skip open for one-shot math except Lean-verified
+    pipelines
+- id: prose
+  label: Prose
+  keywords:
+  - blog post
+  - blog
+  - essay
+  - short story
+  - prose
+  - newsletter
+  - announcement
+  - launch post
+  - copywriting
+  - tagline
+  - bio
+  - readme rewrite
+  match_hint: human is the checker
+  model: moonshotai/kimi-k3
+  effort: medium
+  escalation: claude-opus-5-5
+  provenance: 'priors 2026-09-26 (K3 EQ-Bench creative writing #2 behind Opus 5; judged
+    by a Claude model)'
+  notes: untested prior; blind-test K3 vs Opus 5.5 at low-medium
+- id: orchestration
+  label: Orchestrator / subagents
+  keywords:
+  - orchestrate
+  - orchestration
+  - orchestrator
+  - subagent
+  - multi-agent
+  - multiagent
+  - delegate
+  - fan out
+  - parallel agents
+  - crew
+  - workflow design
+  match_hint: the session plans and delegates, not does
+  model: claude-opus-5-5
+  effort: high
+  escalation: null
+  provenance: priors 2026-09-26 (image 2 only; not in README priors)
+  notes: subagents run at low-medium via delegation.reasoning_effort; set it separately

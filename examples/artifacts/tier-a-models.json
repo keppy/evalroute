@@ -1,0 +1,7 @@
+[
+  {"name": "glm-5.3@medium", "api": "openai", "model": "z-ai/glm-5.3", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "medium", "in": 0.91, "out": 2.86},
+  {"name": "glm-5.3@high", "api": "openai", "model": "z-ai/glm-5.3", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "high", "in": 0.91, "out": 2.86},
+  {"name": "kimi-k3@medium", "api": "openai", "model": "moonshotai/kimi-k3", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "medium", "in": 0.88, "out": 10.53},
+  {"name": "kimi-k3@high", "api": "openai", "model": "moonshotai/kimi-k3", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "high", "in": 0.88, "out": 10.53},
+  {"name": "qwen3.8-max@medium", "api": "openai", "model": "qwen/qwen3.8-max-0902", "base_url": "https://inference-api.nousresearch.com/v1", "key_env": "NOUS_API_KEY", "effort": "medium", "in": 2.00, "out": 6.00}
+]

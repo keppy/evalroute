@@ -1,0 +1,5 @@
+lane,model,effort,n,pend,trunc,err,complete,expected,pass_,lo,hi,cov,passk,try_usd,succ_usd,vmin,allin,known,med_out,p50s
+routine coding,ds-v4.1-flash@medium,medium,30,0,0,0,True,30,1.0,1.0,1.0,1.0,1.0,0.00012875,0.00012875,0.0,0.00012875,True,275.5,8.120000000000001
+routine coding,glm-5.3-flash@low,low,30,0,0,0,True,30,0.9,0.7333333333333334,1.0,1.0,0.8,5.765866666666668e-05,6.40651851851852e-05,0.0,6.40651851851852e-05,True,98.0,3.46
+routine coding,glm-5.3-flash@medium,medium,30,0,0,0,True,30,0.9666666666666668,0.9,1.0,1.0,0.9,5.2845333333333334e-05,5.466758620689655e-05,0.0,5.466758620689655e-05,True,93.0,3.375
+routine coding,ds-v4.1-flash@low,low,30,0,0,0,True,30,1.0,1.0,1.0,1.0,1.0,0.00021250999999999996,0.00021250999999999996,0.0,0.00021250999999999996,True,556.5,9.86
