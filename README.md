@@ -1,200 +1,337 @@
 # evalroute
 
-Measures **cost per verified success** for LLMs, per task lane, and picks a route: the cheapest model that doesn't lose coverage on the hard tail. One file, two deps (`openai`, `anthropic`), append-only JSONL.
+Route a task to the right **(model, reasoning effort) arm** before you start.
+evalroute is a Python package built around the evalroute procedure — a harness
+that measures **cost per verified success** per task lane (`evalroute/harness/
+tier_a.py`: measure, then serve the results) — and turns that output into a
+route table with provenance on every row: pick the lane, pick the model, pick
+the effort, as data.
 
-## Why this exists
+The Hermes plugin is a thin adapter over this package, at
+`keppy/hermes-plugin-evalroute` (`/route`, the `evalroute_route` tool, the
+first-turn sniff, and the bundled skill live there; the routing core lives
+here).
 
-Per-token price is the wrong variable for choosing a model. Three hidden terms dominate what a task actually costs:
-
-1. **Verbosity.** Some cheap models emit 2x the median output tokens, so compare cost per task, not per token.
-2. **The hard tail.** Easy benchmarks are saturated and hide real differences. On Terminal-Bench 2.1, frontier and open models cluster around 88–90. On Terminal-Bench 4.0 they spread from ~13% to ~50%. Retries can't buy a task a model never solves.
-3. **Verification cost.** A cheap model is only cheap if its output is cheap to check.
-
-The working rule: **use cheap models where the checker is cheap (tests, compilers, Lean), and expensive models where the checker is a human.** This harness puts numbers on that rule using your own tasks, instead of vendor tables that mix harnesses and grade each other.
-
-## Quick start
+## Install
 
 ```bash
-pip install openai anthropic numpy          # numpy only for the example coding task
-export NOUS_API_KEY=... NOUS_BASE_URL=...   # base URL from portal.nousresearch.com/api-docs
-export OPENAI_API_KEY=... ANTHROPIC_API_KEY=...
-
-python evalroute.py init                    # writes example models.json + tasks.jsonl
-python evalroute.py run -k 3 --judge gpt-6-sol
-python evalroute.py grade --audit 5         # blind human grading, timed
-python evalroute.py report --usd-per-hour 100 --csv report.csv
+pip install evalroute          # runtime: pyyaml only
+pip install "evalroute[hub]"   # + huggingface_hub, for `sync`
 ```
 
-`run` is resumable. Rerunning skips completed cells and retries errored ones. Use `--only a,b` to run a subset of models.
+## Standalone CLI
 
-## Effort is part of the model
+The same argparse tree the plugin registers, standalone and byte-identical in
+output to `hermes evalroute ...`:
 
-Every model entry must set `effort`, and `run` refuses to start if any entry is missing it. Provider defaults differ and change between releases:
-
-- Kimi K3's native default is max.
-- Hermes sends medium when nothing is configured.
-- Opus 5.5 defaults to medium, where Opus 5 defaulted to high.
-
-With effort unpinned, you don't know which configuration you measured. Effort also moves results about as much as the choice of model does. GPT-6 Luna at max beats GPT-6 Sol at high on DeepSWE, and V4.1 Flash drops from 39 to 25 on the Artificial Analysis index with reasoning off.
-
-So the thing you route between is a **(model, effort) arm**, not a model. Give each effort level its own entry. `init` ships `@medium` and `@max` arms for every model:
-
-- `@medium` matches what Hermes sends by default.
-- `@max` matches the setting most published benchmarks used.
-
-| `api` | Effort is sent as | Valid values |
-|---|---|---|
-| `openai` | `extra_body.reasoning_effort` | `none minimal low medium high xhigh max` (provider-dependent) |
-| `anthropic` | `output_config.effort` | `low medium high xhigh max` |
-| `cmd` | the `{effort}` template placeholder | whatever your harness accepts |
-
-`"effort": "default"` sends nothing and uses the provider's default. It's allowed, but `run` prints a notice listing the unpinned arms. Validation also rejects:
-
-- effort set inside `extra` instead of the `effort` field,
-- `anthropic` entries with `none` or `minimal`,
-- `cmd` templates without an `{effort}` placeholder, since the setting would be silently dropped.
-
-**Config changes rerun instead of pooling.** Each record carries a hash of `api`, `model`, `base_url`, `effort`, `extra`, and `cmd`. If you edit an entry, `run` reruns it. If one model name has results from more than one config, the report shows them as separate `name#<hash>` rows with a warning, rather than mixing them.
-
-**Token caps at high effort:** `max_tokens` caps thinking plus the answer combined, so raise it for `xhigh` and `max`. `init` sets 64000 on the max arms. Watch the report's `trunc=` flag.
-
-### Matching what Hermes actually runs
-
-These notes describe Hermes as of this writing:
-
-- **Effort has three layers.** Session `/reasoning` > per-model `agent.reasoning_overrides` > global `agent.reasoning_effort`.
-- **Per-model overrides have shipped.** `agent.reasoning_overrides` maps model id → effort and is re-resolved on `/model` switches, so effort follows the model automatically. `/model` is session-scoped by default.
-- **Subagents have their own setting,** `delegation.reasoning_effort`. Mixture-of-Agents presets can set effort per slot.
-- **The default is medium** when nothing is configured. That overrides model-native defaults, so K3 runs at medium, not max.
-
-For your routing decisions to match your daily use, the arm you pick here should be the effort you actually run in Hermes. Writing the route table into `agent.reasoning_overrides` makes `/model` carry the effort; `/reasoning` remains a manual step only where two lanes share a model at different efforts.
-
-## Metrics
-
-Computed per (lane, model):
-
-| Column | Meaning |
-|---|---|
-| `pass` | Mean over tasks of the per-task pass rate. The 95% CI is a cluster bootstrap over tasks, because samples within a task are correlated. |
-| `cov` | Coverage: the fraction of tasks passed on at least one of k samples. This is the long-tail metric. |
-| `pass^k` | The fraction of tasks passed on all k samples, i.e. reliability. |
-| `$/try`, `$/succ` | API cost (plus judge cost) per attempt, and per success. |
-| `vmin` | Human verification minutes per attempt, recorded by `grade`. Auto-checked tasks count as 0. |
-| `all-in$/s` | `(API $ + judge $ + verify_hours × usd_per_hour) / passes`. This is the cost of retrying until a pass when every attempt has to be verified. |
-| `med_out`, `p50s` | Median output tokens and median latency. |
-
-**Routing rule.** Within each lane, keep the models whose coverage is at least the best coverage minus `--tol`, then pick the one with the lowest all-in $/success. Coverage acts as a gate, so a model with a great cost per success can't win a lane where it never solves the hard tasks. A `*` in the report marks the Pareto frontier on all-in $/success vs pass rate.
-
-## Files
-
-**`tasks.jsonl`**: one task per line.
-
-```json
-{"id": "code-lse", "lane": "coding", "system": "optional", "prompt": "...",
- "check": {"type": "python", "file": "sol.py", "cmd": "python test.py", "setup": {"test.py": "..."}, "timeout": 120}}
+```bash
+evalroute route --lane routine-coding "fix the failing test"   # route card
+evalroute route --json "read this 80-page spec and summarize"  # JSON envelope
+evalroute dispatch brief.md          # route a brief, spawn hermes chat on that arm,
+                                     # print the rate line (--dry-run prints the argv)
+evalroute sync --status              # which route table is active
+evalroute rate pass --note "why"     # label the last routed task
+evalroute install-routes --dry-run   # route table -> agent.reasoning_overrides
 ```
 
-**`models.json`**: a list of model entries.
+Works with no Hermes installed: the Hermes home falls back to `HERMES_HOME`
+or `~/.hermes`, and the ledger, dataset pins, and effort-override reads all
+honor it.
 
-```json
-{"name": "glm-5.3@max", "api": "openai", "base_url": "$NOUS_BASE_URL", "key_env": "NOUS_API_KEY",
- "model": "z-ai/glm-5.3", "effort": "max", "max_tokens": 64000, "in": 0.91, "out": 2.86,
- "cached": null, "cache_write": null, "max_param": "max_tokens", "extra": {}, "conc": 4}
+## The nine-name contract
+
+The plugin adapter relies on exactly these names; everything else in the
+package is private to the library (see `evalroute/contract.py`,
+`CONTRACT_VERSION = 1`):
+
+| contract name | module | what it is |
+| --- | --- | --- |
+| `routing.set_llm_facade` | `evalroute/routing.py` | stash the host LLM facade; `None` disables the fallback |
+| `routing.evalroute_route` | `evalroute/routing.py` | tool handler (`evalroute_route`) |
+| `routing.handle_route_command` | `evalroute/routing.py` | `/route` slash command |
+| `cli.setup_cli` | `evalroute/cli.py` | argparse wiring (`register_cli_command` setup_fn) |
+| `cli.evalroute_cli` | `evalroute/cli.py` | CLI handler |
+| `flywheel.handle_rate` | `evalroute/flywheel.py` | `/rate` pass\|fail\|skip |
+| `flywheel.on_pre_command` | `evalroute/flywheel.py` | `/model` + `/reasoning` observer |
+| `flywheel.on_post_llm_call` | `evalroute/flywheel.py` | last-seen-model diagnostic |
+| `schemas.EVALROUTE_ROUTE` | `evalroute/schemas.py` | tool schema |
+
+## The route table
+
+`evalroute/data/routes.yaml` — one row per lane: `id`, `keywords` (the rule
+layer), `model`, `effort`, `escalation`, `provenance`, `notes`. Lane taxonomy
+is the union of the two source tables (9 lanes); where they disagreed
+(long-doc merged into web-research in one, orchestration only in the other)
+both are kept as distinct lanes. Model ids must match `/model` spelling
+exactly.
+
+The table began with a **2026-09-26 priors snapshot** (public benchmarks,
+many vendor-run). Three lanes now have small measured batches; the others
+remain marked `priors`. Replace those rows only after your own controlled
+data, and keep each row's `provenance` visible.
+
+### Route table: bundled or synced
+
+The table you route against is either the bundled one or a pinned dataset
+revision; the card says which. The dataset is fetched only when you run
+`sync` (never on install, never while routing), it is pinned to a resolved
+revision, and the library routes fully offline without it:
+
+```bash
+evalroute sync --revision <sha>   # pin the published table (default: main)
+evalroute sync --status           # bundled, or dataset @ <sha>
+evalroute sync --clear            # back to the bundled table
 ```
 
-- `effort` is required (see above).
-- `in`, `out`, `cached`, and `cache_write` are USD per 1M tokens.
-- Use `max_param: "max_completion_tokens"` for OpenAI reasoning models.
-- `extra` is passed straight to the API (temperature, `extra_body`, and so on). Never put effort there.
-- `max_tokens` overrides the `--max-tokens` default for that entry.
+`sync` downloads only the `routes/` config of
+[keppy/evalroute-flywheel](https://huggingface.co/datasets/keppy/evalroute-flywheel)
+into `<hermes home>/evalroute/dataset/<sha>/` — never the measured evidence
+(grows over time; leave it on the Hub). It needs `pip install
+huggingface_hub` (the `hub` extra). Routing data lands only under the Hermes
+home, like the ledger.
 
-**`runs.jsonl`**: append-only, holding three record kinds.
+### Regenerating from measured data
 
-- **run**: `task, lane, model, effort, cfg (config hash), sample, ph (prompt hash), check, text, usage, cost, latency, truncated, jcost, passed`
-- **error**: the same keys plus `error`, with no `text`. These are retried on the next `run`.
-- **grade**: `grade_of ("task|model|sample|cfg"), passed, verify_s, audit`
+```bash
+# in the harness venv (openai + anthropic; it stays out of the runtime venv)
+python -m evalroute.harness.tier_a run -m models.json -t tasks.jsonl -k 3
+python -m evalroute.harness.tier_a report -o runs.jsonl -t tasks.jsonl -k 3 --csv report.csv
+python -m evalroute.routes_from_report --csv report.csv --runs runs.jsonl \
+    --models models.json --k 3 --out routes.generated.yaml
+```
 
-## Checkers
+`report` needs the matching `--tasks` file: it checks each run's prompt/checker
+contract and treats missing declared tasks as incomplete. Without that file it
+prints diagnostics but selects no route. The `report.csv` files under
+`examples/artifacts/` were regenerated from their `runs.jsonl` and
+`tasks.jsonl` with this harness and carry the `complete` column. A legacy CSV
+(no `complete` column) is refused even with `--runs`, since the old winner
+selection may have ignored pending cells; regenerate it the same way.
 
-| `check.type` | Fields | Passes when |
-|---|---|---|
-| `exact` | `answer` | The last `ANSWER: x` line (or the last line, if none) equals `answer`. |
-| `regex` | `pattern` | The pattern matches anywhere in the output. |
-| `python` | `file, cmd, setup, timeout` | The last fenced code block (or the full text, if none) is written to `file` in a temp dir alongside `setup` files, and `cmd` exits 0. |
-| `judge` | `rubric` | The `--judge` model ends its reply with `VERDICT: PASS`. If a model would be judging its own output, the item falls through to human grading. |
-| `human` | `rubric` | You pass it in `grade`. Grading is blind: model names are hidden and order is shuffled. |
+The harness is packaged so the loop is complete inside one repo: write
+tasksets (deterministic `python` checkers where possible — validate every
+checker against a reference solution before paid runs), run k samples per
+arm, report, then flip the lane's row. `routes_from_report` applies the
+report's own routing rule (coverage-gated lowest all-in $/success), stamps
+`provenance: measured ...` with a gonogo McNemar stamp when the winner and
+runner-up shared cases, preserves each lane's `keywords`/`match_hint`/
+`escalation`/`notes`, and carries unmeasured lanes over verbatim —
+regeneration never silently deletes a route. The tier-a tasksets and runs
+that produced the current measured lanes are under `examples/artifacts/`
+(sets: `tasks.jsonl`; raw run records: `runs.jsonl`).
 
-`grade --audit N` blind-regrades N outputs that were already auto-checked. The report then prints how often you agreed with each checker. A low agreement rate means the checker, not the model, is the problem.
+Inspect the generated YAML before replacing the bundled table. `--models`
+maps harness arm names such as `glm-5.3@high` to `/model` IDs; omission is
+only safe if the CSV already contains routable IDs. `--k` defaults to 3;
+graded sample counts must divide evenly by k, or the generator refuses to
+invent a task count. The harness v2 resume key includes the full task and
+checker spec, model price/config and effective max tokens, plus the judge
+configuration when used. It keeps legacy JSONL reportable, but reporting
+mixed legacy/v2 or multiple prompt/checker versions together fails explicitly.
 
-## Agent harnesses (`api: "cmd"`)
+### The Hermes shim (`api: "cmd"` arms)
 
-For agentic runs (Hermes, or anything multi-turn or tool-using), point a model entry at a shell command:
+To run Hermes itself as an evalroute arm (agentic cells):
 
 ```json
 {"name": "hermes-glm@high", "api": "cmd", "effort": "high",
- "cmd": "hermes-shim --model {model} --effort {effort} --prompt {prompt_file}",
+ "cmd": "python -m evalroute.runners.herbes_shim --model {model} --effort {effort} --prompt {prompt_file}",
  "model": "z-ai/glm-5.3", "in": 0.91, "out": 2.86, "timeout": 3600}
 ```
 
-The command template receives `{prompt_file}`, `{system_file}`, `{model}`, and `{effort}`. If a pinned effort isn't used in the template, validation fails. The Hermes batch runner already takes a `--reasoning_effort` flag, which is the natural thing for the shim to forward.
+The shim wraps `hermes -z` (one-shot; tools, memory, AGENTS.md loaded as
+normal; approvals auto-bypassed), reads the usage report (`--usage-file`),
+and emits the contract evalroute expects: the answer on stdout, then one
+JSON last line `{"text": ..., "usage": {"inp", "out", "cache_read"}}`. A
+non-zero hermes exit becomes an `error` field in that line (the harness
+records an error row and retries on the next `run`); the shim itself always
+exits 0. `--system` is prepended to the prompt. `--hermes PATH` overrides
+the executable (tests use this to point at a fake — no real runs).
 
-**Shim contract:** print the final answer, and make the last stdout line JSON: `{"text": "...", "usage": {"inp": N, "out": N, "cache_read": N}}`. Without that line, stdout is treated as the answer and cost shows as `?`. **A reference Hermes shim ships in [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute) (`runners/hermes-shim.py`)**: it wraps `hermes -z`, reads `--usage-file` for real token counts, maps them to the contract keys, reports a non-zero hermes exit as an `error` row (retryable on the next `run`), and always exits 0 so the harness records rather than crashes. `--system` is prepended to the prompt; `--hermes PATH` overrides the executable for tests.
+## Classification: rules first, LLM when weak
 
-## Integration notes
+The classifier's first layer is deterministic keyword rules over
+`evalroute/data/routes.yaml` — free, no API calls — but rules alone misroute
+paraphrase ("manage life, writing, and researchy tasks" has zero keyword
+signal) and negation ("not usually hard math though" used to count as a
+math hit; the rules now guard negated keywords). So routing is two-layer:
 
-- **Deterministic graders plug in as `python` checks.** Any grader that exits 0 on pass and non-zero on fail works, including gonogo-style matchers. The model output lands in `file`, and `cmd` runs with the temp dir as its working directory.
-- **Use `report --csv` as the stable downstream interface.** `runs.jsonl` is the raw log, and its schema may grow. The [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute) repo consumes this CSV directly: `routes_from_report.py` turns a report into a measured route table (coverage-gated cheapest-arm per lane, `provenance: measured ...` stamped per row), which the plugin then serves as route cards.
-- **Prompt edits are detected.** Editing a task's prompt changes its hash, and the report warns when results mix prompt versions. Either give the edited task a new `id`, or filter old rows out of `runs.jsonl`.
-- **The flywheel closes the loop.** The plugin's daily-use labels (`/route`, `/rate`, implicit verdicts from model/effort switches) accumulate observational per-lane, per-facet outcomes; snapshots live in the plugin repo (`data/flywheel/labels.jsonl`). Observational data prioritizes which lane to measure next and contests priors rows; only this harness's k-sample batches make a row measured.
+1. **Strong rules** (2+ distinct keyword hits on the winning lane) — trusted
+   outright, no LLM call.
+2. **Weak signal** (0-1 hits) — one structured call via the facade set with
+   `routing.set_llm_facade` (the host's own model and auth; the plugin sets
+   it at register time, but **it consumes tokens and may incur provider
+   charges**). `None` (the default, and what a bare `evalroute` CLI sees)
+   disables the fallback. The LLM judges what the work IS — a description of
+   an assistant's duties routes to `orchestration`, not to whatever nouns
+   appear.
 
-## Priors (snapshot, 2026-09-26)
+The card always prints which layer decided: `rules match`, `LLM fallback`,
+or `no keyword hit - defaulted`. If the LLM call fails (offline, no facade),
+the weak rules result stands and the card says so. Pin manually with
+`--lane <id>` when you know better.
 
-These are the starting routes this tool is meant to confirm or overturn. They come from public benchmarks, many of them vendor-run. **Replace them with your own report output as soon as you have data.**
+## Facets: labels with dimensions
 
-**Most of these numbers were measured at max effort**:
-- All of Kimi's published K3 results.
-- The Artificial Analysis "(max)" entries for GLM 5.3 and V4.1 Flash.
-- GPT-6 Sol at max or xhigh.
+A lane is the routing decision; facets are the label. Every route also
+captures the task's shape along three axes, defined in
+`evalroute/data/facets.yaml`:
 
-The one exception here is Opus 5.5 on MathArena, measured at high. At Hermes's default of medium, expect lower scores and fewer tokens than these figures suggest.
+- **input-shape**: `long-doc` | `interactive`
+- **domain**: `domain-dlml` | `domain-alignment` | `domain-math` | `domain-prose` | `domain-research`
+- **demand-tier**: `tier-routine` | `tier-hard` | `tier-orchestration`
 
-| Lane | Best open-weight tier | Gap to closed | Prior route (starting effort) |
-|---|---|---|---|
-| Routine coding | DeepSeek V4.1 Flash → GLM 5.3 Flash | small | V4.1 Flash @ low–medium: verbose, and tests catch misses cheaply |
-| Hard agentic coding | GLM 5.3 (TB 4.0: 42% vs K3 13%, Artificial Analysis, at max) | ~10 pts | GLM 5.3 @ high–max, then GPT-6 Sol / Opus 5.5 |
-| DL / ML research engineering | GLM 5.3 ≈ Kimi K3 (vendors disagree on PostTrainBench) | small | GLM 5.3 @ high; verify |
-| Long-doc reading | V4.1 Flash (AA-LCR 84%, on par with GPT-5.6 Sol) | ~none | V4.1 Flash @ medium |
-| Web research | Kimi K3 (BrowseComp 91.2, vendor-reported, at max) | ~none | K3 @ medium: input-heavy work, and max roughly triples output at $10.53/M |
-| Math, first principles | Qwen3.8-Max (MathArena 56% vs GPT-6 Sol 85%, Opus 5.5 83%) | ~27–30 pts | GPT-6 Sol @ max / Opus 5.5 @ high; skip open (exception: Lean-verified pipelines) |
-| Alignment reasoning, paper claims | GLM 5.3 (K3's hallucination rate rose to 51% on AA-Omniscience) | unmeasured | measure with this tool |
-| Prose | Kimi K3 (EQ-Bench CW #2 behind Opus 5; judged by a Claude model) | small | blind-test K3 vs Opus 5.5 @ low–medium (untested prior) |
-| Orchestration | — | — | Opus 5.5 @ high; subagents @ low–medium via `delegation.reasoning_effort` |
+So "audit my RL training plan files" is recorded as `long-doc +
+domain-dlml + tier-hard` — three facts about one task — instead of one
+collapsed lane. The rules layer derives facets from keyword evidence
+(conservative: only lanes that drew hits claim facets); the LLM fallback
+names them semantically in the same structured call.
 
-Two cost notes from the same snapshot:
+When a task claims facets on multiple axes, the card describes the
+conjunction. **Facets do not alter the chosen arm**: the lane classifier
+selects the arm; no domain/tier precedence is implemented:
 
-- **Use the direct Anthropic key for Opus 5.5.** Nous charges the same list price as direct, but direct gets $0.20 cache reads and 50% off via the Batch API.
-- **K3's Nous promo is mostly an input discount.** Input is 71% off but output only 30% off ($0.88 / $10.53). Since K3 is verbose, it's cheap on input-heavy tasks, not on long reasoning.
+```
+facets: long-doc + domain-dlml (descriptive conjunction; lane chooses arm)
+```
 
-## Measured so far (2026-09-27)
+Facet conjunctions aggregate in `routes_from_labels`, so the
+high-dimensional nodes — "how do long-doc x dl-ml tasks fare on arm X?" —
+fill in from daily use without controlled-batch spend.
 
-First three lanes measured with this harness via the Nous inference API — 10 tasks, k=3, python checkers where the output is code (validated against a reference solution before any paid run) and a third-vendor judge (qwen3.8-max) otherwise. ~$5 total.
+## Flywheel: labels from daily workflow
 
-| Lane | Winner | cov | all-in $/succ | Settled |
-|---|---|---|---|---|
-| Routine coding | glm-5.3-flash @ medium | 1.00 | $0.00005 | Priors' vendor pick (V4.1 Flash) never won: 2.4–3.9x the winner's cost at equal coverage |
-| DL / ML research engineering | glm-5.3 @ high | 1.00 | $0.0024 | "GLM 5.3 ≈ K3, vendors disagree" resolved: GLM 5.3 on cost (K3 slightly higher raw pass, ~3x the price; its @medium arm also dropped coverage to 0.90) |
-| Alignment reasoning | glm-5.3 @ medium | 1.00 | $0.0119 | Ceiling effect — all four arms 100%, cost decided. A harder set is needed before quality gaps are detectable |
+The controlled harness is not the only source of data. As you route in daily
+sessions, the library quietly builds an observational dataset:
 
-Two caveats the reports carry in their provenance stamps: every winner was statistically indistinguishable from its runner-up at n=10 (McNemar, via gonogo), so these are cost decisions on tied arms, not quality claims; and the alignment set is too easy to detect quality differences. The harness, these tasksets, and the raw runs are vendored in [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute) (`harness/evalroute.py`, `examples/artifacts/tier-a-*/`) — that repo is the public home of the whole loop; the measured route table itself is its `data/routes.yaml`.
+- **`route`** logs the assignment (lane, recommended arm, method,
+  confidence, facets) to `<hermes home>/evalroute/labels.jsonl` — the
+  task text you typed is the label.
+- **`/model` or `/reasoning` after a route** logs a process-global switch
+  observation. Without a session join it is not a verified route rejection
+  and cannot supply the actual arm for a flip.
+- **`rate pass|fail [--route-id <id>] [--lane <id>] [--model <id> --effort <level>] [--note ...]`**
+  labels the outcome when you finish. Use both arm flags to self-report what
+  actually ran; otherwise the arm stays unknown. `--lane` corrects a lane;
+  `skip` discards that route. Prefer `--route-id` in overlapping sessions.
+- Nothing else is recorded: no response bodies or turn telemetry. Task text,
+  switch arguments and optional notes are recorded. The last-seen model is
+  process-global memory only and is **not** assigned to a route as fact.
+
+The ledger therefore holds two row qualities: an **observed arm** (a
+`/model` or `/reasoning` switch after a route — a process-global candidate,
+not proof) and a **caller-stated arm** (`evalroute dispatch <brief.md>`
+records the spawn arguments as `arm_attribution: explicit_user` on the
+outcome row). `dispatch` is the one-line form of the flywheel: route the
+brief, spawn `hermes chat` on exactly that arm, print the `rate it:` line —
+it still never auto-rates `pass`.
+
+The ledger is **profile-wide**, not session-scoped: command hooks do not
+supply a reliable session ID for route and rate. The card prints a route ID;
+when tasks overlap, select it with `--route-id`. Without it, `rate` consumes
+the latest pending route in that profile, which may be another session's.
+`/model` and `/reasoning` observations are process-global candidates, not
+proof of which model served a given route; only an explicit `rate --model
+... --effort ...` confirms an observational arm. To replace a pinned card,
+use `route --lane <lane> --replace-route-id <old-id> <same task>`; identical
+task text alone never consumes another pending route. Inspect the route ID,
+task and lane before trusting a label.
+
+**Continuing across sessions (turn caps).** A task that outlives its session —
+the turn limit hits, the terminal closes mid-task — is a continuation, not a
+new route. The row being labeled is (task, arm), not (task, session):
+
+- Prefer staying in the session: `continue: <what remains>` gets a fresh
+  iteration budget, and the arm is session-scoped and persists.
+- Otherwise `hermes -c` continues the same conversation, or paste the capped
+  session's final turn as the new session's opener.
+- Never re-`route` the continuation. If the new session is a different task,
+  `rate skip --route-id <id>` clears that specific pending row first if it
+  belongs to you; don't consume another user's pending row.
+- Steer as much as you like. The observed layer is defined as
+  daily-workflow-with-a-human-in-the-loop; a directive continuation is normal
+  operation, and it matches a detailed original prompt better than a bare
+  "continue" — which quietly tests prompt-luck instead of the arm. Measured
+  rows are untouched: they come from fixed-prompt, fresh-context harness cells.
+- Put the methodology in the note: `--note "completed across two sessions
+  (turn cap), directive continuation"`. The label records neither cost nor
+  session boundaries, and a session-spanning pass re-reads the accumulated
+  context at full input price — the note is where that lives.
+
+**Turning labels into route data:** `python -m evalroute.routes_from_labels`
+prints per-lane, per-arm pass rates, lane corrections, and facet conjunction
+outcomes; `--apply` writes `routes.observed.yaml`. Observed rows carry
+honest, weaker provenance:
+
+```
+observed 23 outcomes, same-maintainer observational single-arm, pass 78%, 2026-10-30;
+not independent trials or a controlled comparison
+```
+
+and only where the lane has no `measured` row — observational data can contest
+a priors row, never overwrite a measured one. When gonogo is installed, each
+observed row also carries its decide() verdict, so a row with 3 outcomes reads
+as INSUFFICIENT_EVIDENCE rather than a pass rate someone will trust. The one
+provisional flip threshold is 3 user-confirmed arm failures on the recommended
+arm and 2 user-confirmed wins on another observed arm. This is still
+same-maintainer, non-randomized evidence — review it and verify with paired
+controlled cases before treating it as a quality comparison. The two
+same-arm outcomes in the old snapshot never justify a route flip.
+
+**Publishing the labels.** The live ledger stays local and append-only; do
+not check raw labels into a public repo. Task text and notes can expose
+paths and private project details even without response bodies. Do not claim
+retroactive erasure for any label data once shared.
+
+## What the harness measures
+
+Three lanes measured with the evalroute harness via the Nous inference API —
+10 tasks x 3 samples per arm (four routine-coding, five DL/ML, five
+alignment arms, of which only four alignment arms have graded samples: 119
+graded, 30 judge-pending, and one missing cell). Raw API and judge cost in
+the vendored rows totals **$3.0590051**, excluding verification time across
+routine coding, DL/ML research engineering, and alignment reasoning. Every
+winner was statistically indistinguishable from its runner-up at n=10
+(McNemar, via gonogo) — the empirical paired gap is zero, but the
+conservative interval spans [-33.4%, +33.4%]; $p=1$ is not a population
+equivalence test. All-coverage lanes have a ceiling on this taskset; the
+routes choose cost among observed ties, not quality parity. The alignment
+judge has no blind checker audit; its 30 pending Qwen outputs are excluded
+from the route comparison. No quality claim spans that arm. The historical
+v1 run records omit model IDs; the arm-name-to-ID mapping is the vendored
+`models.json`, not an ID echoed by those records. Routine coding overturned
+the priors' vendor pick: glm-5.3-flash at medium effort covered every task
+at $0.00005/success, 2.4–3.9x cheaper than the V4.1 Flash arms at equal
+coverage.
+
+Every row is `priors`, `observed`, or `measured`. Nothing hypothesis-shaped
+masquerades as a result — the card prints the row's provenance verbatim,
+statistical stamp included.
 
 ## Known limitations
 
-- **Only `cmd` models can run agentic tasks.** The `openai` and `anthropic` modes are single-turn with no tool use.
-- **Some config values were guesses at first, now partly verified.** Verified against `/models` on 2026-09-27: the Nous base URL (`https://inference-api.nousresearch.com/v1`) and `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` work as-is; the Qwen judge id is `qwen/qwen3.8-max-0902`, not `qwen/qwen3.8-max`. The portal's two GLM 5.3 Flash prices both work — use the one you're billed ($0.12/$0.40 matched the runs here).
-- **Prices are hard-coded in `models.json`.** Portal promos change, so update prices before trusting any cost column.
-- **Small samples mean wide CIs.** You need at least 2 tasks per lane for a CI at all. Use 10+ tasks per lane and k ≥ 3 for signal. Coverage is noisy at small k.
-- **LLM judges carry bias.** Never let a model judge itself. Prefer a judge from a different vendor than the models being graded.
-- **Long outputs get cut off.** The default `--max-tokens` is 32768. Verbose models at high effort can hit it, which is why `init` sets 64000 on the max arms. Truncated outputs are flagged in the report.
-- **Effort values aren't validated against each provider.** The harness checks the global set of level names only. Whether a given OpenAI-compatible model accepts `xhigh` or `max` is up to that provider, and a rejection surfaces as an `error` record.
-- **Anthropic caching and effort interact.** Changing effort between requests invalidates cached prefixes on Anthropic, so keep one effort level per arm.
-- **⚠ `python` checks execute model-generated code on the host.** Run the harness inside a container or VM.
+- **The rule layer is keywords.** Deterministic, free, and misses
+  paraphrase — which is what the LLM fallback is for. The fallback's
+  quality tracks whatever model the host is on; it costs one small
+  structured call (temp 0, 256 tokens) only when rules are weak.
+- **The library cannot switch the model for you.** `route` prints the card;
+  you run `/model <id>`. Run it before turn 1 — mid-session switches re-read
+  the whole context at full input price.
+- **One effort slot per model id** (`agent.reasoning_overrides`); when a
+  model serves two lanes, `install-routes` keeps the higher effort. A
+  lower-effort lane's card explicitly prints `/reasoning <lane-effort>`
+  after `/model`, because the installed override alone would run the wrong
+  arm.
+- **Provenance is priors until you measure.** Several rows are explicitly
+  untested/unmeasured/contested; the card prints the provenance verbatim so
+  nobody mistakes a hypothesis for a result.
+- **The harness stays out of the runtime venv.** Run it in its own venv with
+  `openai`/`anthropic`; `EVALROUTE_PYTHON` points the runners at that
+  interpreter. The package itself requires nothing beyond `pyyaml`
+  (`huggingface_hub` only for `sync`).
+- **The sniff hook is advisory only** (plugin side): it speaks when the
+  classifier is confident and the session's model disagrees with the lane's
+  route; it never rewrites, blocks, or switches.
+- **`install-routes` needs the Hermes config module to write.** Standalone,
+  writing `agent.reasoning_overrides` works inside the `hermes` process;
+  `--dry-run` works anywhere.

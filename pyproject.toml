@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "evalroute"
+version = "0.6.0"
+description = "Model routing with a verified-success flywheel: classify tasks, measure arms, feed results back"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["pyyaml>=6,<7"]
+
+[project.optional-dependencies]
+hub = ["huggingface_hub>=0.20"]
+dev = ["pytest>=7", "gonogo-eval>=0.3,<0.4"]
+
+[project.scripts]
+evalroute = "evalroute.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["evalroute"]
