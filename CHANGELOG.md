@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `evalroute contribute --dry-run`: whitelist-redacted outcome rows, printed
+  as exact JSONL before anything can leave. Kept keys only (lane, arms,
+  verdict, method, facet counts, ISO week, HMAC task hash under a per-install
+  salt, corrected flag, schema); task text, notes, paths, hostnames, session
+  keys and timestamps beyond week granularity never leave the machine.
+- `evalroute contribute` (gated, default off): uploads redacted rows as one
+  JSONL file per run to `contributed/<hf-username>/` in
+  keppy/evalroute-flywheel (the contributor's own HF account; `--repo` for
+  forks), advancing a cursor so only new rows go. Gate order:
+  `EVALROUTE_CONTRIBUTE=1` > `evalroute.contribute: true` in the Hermes
+  config.yaml > `{"contribute": true}` in `<home>/evalroute/config.json`;
+  without the gate the command exits 2 with the fix. `--rotate-salt`
+  regenerates the salt and resets the cursor.
+- `routes_from_labels.py --contributed DIR`: pools every JSONL under a synced
+  `contributed/` tree into `observed N tasks across K contributors,
+  single-arm, pass R%` rows. Invariant, enforced by test:
+  `merge_contributed` changes nothing on measured lanes and never introduces
+  a model the table doesn't already know.
+- `sync --with-contributed`: also downloads the `contributed/` tree
+  (read-only). `publish_dataset.py` includes `contributed/` when present and
+  counts it in `routes/MANIFEST.json`.
+- `docs/catalog-disclosure.txt`: the disclosure sentence for the next
+  Hermes catalog submission.
+
 ## [0.7.1] - 2026-10-04
 
 ### Fixed

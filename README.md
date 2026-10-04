@@ -372,7 +372,53 @@ evalroute sync --status --json    # {"active", "sha", "path", "lanes", "measured
 [keppy/evalroute-flywheel](https://huggingface.co/datasets/keppy/evalroute-flywheel)
 into `<home>/evalroute/dataset/<sha>/` — never the measured evidence
 (grows over time; leave it on the Hub). It needs `pip install
-huggingface_hub` (the `hub` extra).
+huggingface_hub` (the `hub` extra). `--with-contributed` also pulls the
+`contributed/` tree, read-only, so you can pool the redacted rows yourself
+(see below).
+
+## Contributing outcomes
+
+After a week of routing and rating, your ledger holds real outcomes on arms
+nobody has measured. `contribute` shares them — opt-in, redacted, and
+nothing on by default. The route table's honest size (top of this README)
+only grows when people do this.
+
+What leaves your machine — and only this, whitelist-redacted:
+
+| key | what it is |
+| --- | --- |
+| `kind` | always `outcome` |
+| `route_lane`, `route_model`, `route_effort` | the routed arm |
+| `actual_model`, `actual_effort`, `arm_attribution` | the arm you actually ran (only when you confirmed it) |
+| `method`, `confidence` | how the route was classified |
+| `rated` | pass / fail / skip (rating corrections applied) |
+| `facets` | counts only, e.g. `{"long-doc": 1}` |
+| `week` | ISO year-week (`2026-W40`) — no timestamps |
+| `task_hash` | HMAC-SHA256 of the task text under a per-install salt |
+| `corrected`, `schema` | correction flag; schema version |
+
+What never leaves: task text, notes, paths, hostnames, session keys,
+emails, the salt itself, the HF token (evalroute never reads it —
+`huggingface_hub` uses its own store), and any ledger key not on the list.
+A future whitelist change is a schema bump.
+
+```bash
+evalroute contribute --dry-run          # prints the exact rows that would go; grep first
+evalroute contribute                    # uploads after you've read them
+evalroute contribute --rotate-salt      # new salt + empty cursor
+```
+
+Turn the gate on for your surface (off by default): `EVALROUTE_CONTRIBUTE=1`
+(standalone convenience; Hermes users use config), or `evalroute.contribute:
+true` in the Hermes `config.yaml`, or `{"contribute": true}` in
+`<home>/evalroute/config.json`. Uploads land as one JSONL file per run under
+`contributed/<your-hf-username>/` in the dataset (`--repo` to target a
+fork), and a cursor makes each upload send only new rows.
+
+Pooled rows are **observational**: they can contest a `priors` lane, never
+touch a `measured` one, and cannot introduce a model the table doesn't
+already know. After the next `sync`, contributors' rows show up on route
+cards as `observed N tasks across K contributors, single-arm, pass R%`.
 
 ## Known limitations
 
