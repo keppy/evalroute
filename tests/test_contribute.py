@@ -205,13 +205,23 @@ def test_gate_standalone_config_json(home):
 
 
 def test_gate_hermes_config_yaml(home, monkeypatch):
-    fake = types.ModuleType("hermes_constants")
-    fake.get_hermes_home = lambda: str(home)
-    monkeypatch.setitem(sys.modules, "hermes_constants", fake)
+    # The console script has no hermes_constants on its path; the gate must
+    # still find config.yaml in the resolved home (the bug the first live run hit).
+    monkeypatch.setitem(sys.modules, "hermes_constants", None)
     (home / "config.yaml").write_text("evalroute:\n  contribute: true\n", encoding="utf-8")
     assert contribute.contribute_enabled() is True
     (home / "config.yaml").write_text("evalroute:\n  contribute: false\n", encoding="utf-8")
     assert contribute.contribute_enabled() is False
+
+
+def test_gate_hermes_config_yaml_via_hermes_constants(home, monkeypatch):
+    fake = types.ModuleType("hermes_constants")
+    fake.get_hermes_home = lambda: str(home)
+    monkeypatch.setitem(sys.modules, "hermes_constants", fake)
+    monkeypatch.delenv("EVALROUTE_HOME", raising=False)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    (home / "config.yaml").write_text("evalroute:\n  contribute: true\n", encoding="utf-8")
+    assert contribute.contribute_enabled() is True
 
 
 # ---------------------------------------------------------------- dry-run / upload

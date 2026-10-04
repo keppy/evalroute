@@ -75,16 +75,15 @@ REPO_ID = "keppy/evalroute-flywheel"
 
 
 def _hermes_config_path() -> Optional[Path]:
-    """The Hermes config.yaml, only when hermes_constants locates one."""
-    try:
-        import hermes_constants  # type: ignore
+    """`config.yaml` in the resolved home — the same home the ledger lives in.
 
-        home = getattr(hermes_constants, "get_hermes_home", None)
-        if callable(home):
-            return Path(home()) / "config.yaml"
-    except Exception:
-        return None
-    return None
+    Resolved through ``paths.hermes_home()`` (``EVALROUTE_HOME`` > ``HERMES_HOME``
+    > ``hermes_constants`` > ``~/.hermes``) so the standalone console script,
+    which has no ``hermes_constants`` on its path, still finds the Hermes
+    config a user was told to edit. A standalone install simply has no such
+    file and falls through to ``config.json``.
+    """
+    return hermes_home() / "config.yaml"
 
 
 def contribute_enabled() -> bool:

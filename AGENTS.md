@@ -61,8 +61,17 @@ evalroute sync --clear      # back to bundled
 
 `sync` downloads data, not code, on your explicit command, pinned to a dataset commit
 sha, validated before activation; routing works offline on the bundled table without
-it. Needs `pip install "evalroute[hub]"`. `contribute` (opt-in, redacted outcome rows)
-is planned and not yet shipped; nothing leaves your machine today.
+it. Needs `pip install "evalroute[hub]"`.
+
+Sharing outcomes: `evalroute contribute --dry-run` prints the exact whitelist-redacted
+outcome rows that would go (task text, notes, paths and the salt never leave);
+`evalroute contribute` uploads them — after you have read the dry-run — to
+`contributed/<your-hf-username>/` in `keppy/evalroute-flywheel` with your own
+`huggingface_hub` login, but only with the gate on: `evalroute.contribute: true` in
+Hermes `config.yaml`, or `EVALROUTE_CONTRIBUTE=1` / `<home>/evalroute/config.json`
+`{"contribute": true}` for standalone installs. Only rows that name the arm you
+actually ran are ever pooled, and pooled rows can never overwrite a `measured` row.
+`--rotate-salt` regenerates the salt and resets the upload cursor.
 
 ## Rules
 
