@@ -70,6 +70,111 @@ def _build_argv(model: str, effort: str, provider: str, brief: Path,
     return argv
 
 
+# ------------------------------------------------------------- runner templates
+
+# Named runners. `hermes` is the built-in default (flags verified against this
+# repo's own spawn path). Every other named runner below must have had its
+# flags read from the CLI's real `--help` on the maintainer's machine before
+# it lands here — unverified CLIs live in docs/runners.md as sketches only.
+_NAMED_RUNNERS: dict[str, str] = {
+    "hermes": "hermes chat -Q --oneshot -m {model} --provider {provider} "
+              "--reasoning {effort} --query-file {brief}",
+}
+
+_TEMPLATE_VARS = ("{model}", "{effort}", "{provider}", "{brief}", "{indir}",
+                  "{brief_text}")
+
+
+def _known_runners() -> list[str]:
+    env = os.environ.get("EVALROUTE_RUNNER", "")
+    return sorted(set(_NAMED_RUNNERS) | ({env} if env else set()))
+
+
+def _resolve_runner(runner: str | None) -> str:
+    """--runner value -> a template string (a known name or a raw template)."""
+    spec = (runner or "").strip()
+    if not spec:
+        spec = os.environ.get("EVALROUTE_RUNNER", "").strip() or "hermes"
+    if spec in _NAMED_RUNNERS:
+        return _NAMED_RUNNERS[spec]
+    if "{" in spec and "}" in spec:
+        return spec
+    raise ValueError(
+        f"unknown runner {spec!r}; known runners: "
+        + ", ".join(_known_runners())
+        + " (or pass a template with {model} {effort} {provider} {brief} "
+          "{indir} {brief_text} placeholders)")
+
+
+def _build_runner_argv(template: str, model: str, effort: str, provider: str,
+                       brief: Path, indir: str | None) -> list[str]:
+    """Substitute placeholders into already-split tokens, never the raw string.
+
+    shlex splits the template first; each token then gets its placeholder
+    replaced wholesale, so spaces and quotes inside paths survive as one argv
+    entry. A token of exactly '{indir}' with no indir is dropped; '{brief_text}'
+    substitutes the brief's file contents (for CLIs that take the prompt
+    inline). '{effort}' may be omitted by the template — the routed effort is
+    still recorded on the card and the rate line.
+    """
+    argv: list[str] = []
+    brief_text = brief.read_text(encoding="utf-8", errors="replace")
+    for token in shlex.split(template, posix=(os.name != "nt")):
+        if token == "{indir}" and not indir:
+            continue
+        value = (token
+                 .replace("{model}", model)
+                 .replace("{effort}", effort)
+                 .replace("{provider}", provider)
+                 .replace("{brief}", str(brief))
+                 .replace("{indir}", str(indir or ""))
+                 .replace("{brief_text}", brief_text))
+        argv.append(value)
+    return argv
+
+
+# ------------------------------------------------------------------- sidecar
+
+_SIDECAR_KEYS = ("route_id", "lane", "model", "effort", "provider", "runner",
+                 "brief", "indir", "started", "ended", "duration_s", "exit",
+                 "session_id", "report", "rate_line")
+
+
+def _write_sidecar(brief: Path, run: dict[str, Any]) -> Path:
+    """Append one run record to `<brief>.dispatch.json` (newest last).
+
+    A file without a "runs" list (a bare single-run object from an older
+    writer) is converted to {"runs": [<that object>]} before appending.
+    """
+    path = brief.with_name(brief.stem + ".dispatch.json")
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            existing = {}
+    runs = existing.get("runs")
+    if not isinstance(runs, list):
+        runs = [existing] if existing else []
+    runs.append({k: run.get(k) for k in _SIDECAR_KEYS})
+    path.write_text(json.dumps({"runs": runs}, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _latest_run(sidecar: Path) -> dict[str, Any] | None:
+    """Newest run record from a dispatch sidecar, or None."""
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    runs = data.get("runs") if isinstance(data, dict) else None
+    if isinstance(runs, list) and runs and isinstance(runs[-1], dict):
+        return runs[-1]
+    if isinstance(data, dict) and data.get("route_id") is not None:
+        return data
+    return None
+
+
 def _spawn(argv: list[str], out_path: Path, timeout: float | None) -> tuple[int, str]:
     """Run the child; stdout -> report, stderr -> log. Returns (code, stderr text)."""
     err_path = out_path.with_suffix(out_path.suffix + ".stderr.log")
@@ -267,6 +372,12 @@ def run(args: Any) -> int:
     if not brief.exists():
         print(f"evalroute dispatch: brief not found: {brief}", file=sys.stderr)
         return 2
+    as_json = bool(getattr(args, "json", False))
+    try:
+        template = _resolve_runner(getattr(args, "runner", None))
+    except ValueError as exc:
+        print(f"evalroute dispatch: {exc}", file=sys.stderr)
+        return 2
     task = (getattr(args, "task", None) or "").strip() or _default_task(brief)
     lane_id = getattr(args, "lane", None)
     replace_id = ""
@@ -289,32 +400,70 @@ def run(args: Any) -> int:
     out_path = Path(args.out).resolve() if getattr(args, "out", None) else \
         brief.with_name(brief.stem + ".report.md")
     indir = getattr(args, "indir", None)
-    argv = _build_argv(model, effort, provider, brief, indir)
+    is_hermes = template == _NAMED_RUNNERS["hermes"]
+    if is_hermes:
+        argv = _build_argv(model, effort, provider, brief, indir)
+    else:
+        argv = _build_runner_argv(template, model, effort, provider, brief, indir)
     rate_line = (f"rate it:  hermes evalroute rate pass|fail --route-id {route_id} "
                  f"--model {model} --effort {effort} --note \"...\"")
+    started_ts = time.time()
+
+    def _emit(payload: dict[str, Any], lines: list[str]) -> None:
+        if as_json:
+            print(json.dumps(payload))
+        else:
+            for line in lines:
+                print(line)
 
     if getattr(args, "dry_run", False):
-        print(f"would run: {shlex.join(argv)}")
-        print(f"dry run: route {route_id} noted but never rated - it is a SKIP for the human "
-              f"(/rate skip --route-id {route_id})")
-        print(rate_line)
+        sidecar: dict[str, Any] = {
+            "route_id": route_id, "lane": lane_id or "auto", "model": model,
+            "effort": effort, "provider": provider,
+            "runner": getattr(args, "runner", None) or os.environ.get("EVALROUTE_RUNNER")
+                      or "hermes",
+            "brief": str(brief), "indir": indir, "started": None, "ended": None,
+            "duration_s": None, "exit": None, "session_id": None,
+            "report": str(out_path), "rate_line": rate_line,
+        }
+        sidecar["argv"] = shlex.join(argv)
+        _write_sidecar(brief, sidecar)
+        _emit(sidecar, [f"would run: {shlex.join(argv)}",
+               f"dry run: route {route_id} noted but never rated - it is a SKIP for the human "
+               f"(/rate skip --route-id {route_id})",
+               rate_line])
         return 0
 
     timeout = getattr(args, "timeout", None)
-    started = time.time()
     if getattr(args, "follow", False):
         # Poll the session store while the child runs; stderr-only advisory.
         cwd = str(Path(indir).resolve()) if indir else str(brief.parent)
-        code, stderr_text = _spawn_follow(argv, out_path, timeout, cwd, started)
+        code, stderr_text = _spawn_follow(argv, out_path, timeout, cwd, started_ts)
     else:
         code, stderr_text = _spawn(argv, out_path, timeout)
-    elapsed = time.time() - started
-    session = _SESSION_ID.search(stderr_text)
-    session_id = session.group(1) if session else None
-    print(f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}), "
-          f"exit {code}, {_fmt_dur(elapsed)}")
-    print(f"report: {out_path}   session: {session_id or '-'}")
-    print(rate_line)
+    elapsed = time.time() - started_ts
+    session_id = None
+    if is_hermes:
+        # _SESSION_ID is Hermes-shaped (the child prints `session_id:` on
+        # stderr); other runners have no contract for it, so session is "-".
+        session = _SESSION_ID.search(stderr_text)
+        session_id = session.group(1) if session else None
+    sidecar = {
+        "route_id": route_id, "lane": lane_id or "auto", "model": model,
+        "effort": effort, "provider": provider, "runner":
+            getattr(args, "runner", None) or os.environ.get("EVALROUTE_RUNNER")
+            or "hermes",
+        "brief": str(brief), "indir": indir,
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_ts)),
+        "ended": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+        "duration_s": round(elapsed, 3), "exit": code, "session_id": session_id,
+        "report": str(out_path), "rate_line": rate_line,
+    }
+    _write_sidecar(brief, sidecar)
+    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}), "
+           f"exit {code}, {_fmt_dur(elapsed)}",
+           f"report: {out_path}   session: {session_id or '-'}",
+           rate_line])
     if code != 0 and getattr(args, "rate_on_exit", None) == "fail":
         confirmation = fw.handle_rate(
             f"fail --route-id {route_id} --model {model} --effort {effort} "
