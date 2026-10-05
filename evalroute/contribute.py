@@ -5,7 +5,10 @@ Privacy model (whitelist, not blacklist — the same failure philosophy as
 
 - Only outcome rows are considered; ``route`` rows carry task text and never
   leave the machine, nor do ``model_switch`` / ``effort_switch`` /
-  ``lane_correction`` / ``rating_correction`` kinds. A ``rating_correction``
+  ``rating_correction`` kinds. ``lane_correction`` rows ship as lane pairs
+  only — ``from_lane`` / ``to_lane`` plus the classifier ``method`` and week;
+  never any task text (a correction is a fact about the lane descriptions
+  that pools across installs without text). A ``rating_correction``
   that consumed an outcome's id is folded in *before* redaction as a verdict
   override (the outcome's ``rated`` becomes the correction's and
   ``corrected: true`` is set); the correction row itself is not uploaded.
@@ -60,13 +63,16 @@ KEPT = (
     "confidence",
     "rated",
     "facets",
+    "max_turns",
     "week",
     "task_hash",
     "corrected",
+    "from_lane",
+    "to_lane",
     "schema",
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 REPO_ID = "keppy/evalroute-flywheel"
 
@@ -246,6 +252,7 @@ def redact_report(records: list[dict[str, Any]], salt: bytes,
             "confidence": round(float(out.get("confidence", 0)), 2),
             "rated": rated,
             "facets": _facet_counts(out.get("facets") or route.get("facets")),
+            "max_turns": out.get("max_turns"),
             "week": _week(float(out.get("ts", 0))),
             "task_hash": _task_hash(route["task"], salt),
             "corrected": corrected,
@@ -254,16 +261,49 @@ def redact_report(records: list[dict[str, Any]], salt: bytes,
         rows.append((float(out.get("ts", 0)), row))
     rows.sort(key=lambda p: p[0])  # ts order: the cursor is a ts, so uploads stay monotonic
     rows = [row for _, row in rows]
+
+    # Lane corrections ship as lane pairs only — never the task text.
+    # A correction row is written right after the route it corrected, so the
+    # classifier method is recovered from the last route seen before it.
+    correction_rows: list[tuple[float, dict[str, Any]]] = []
+    last_route: dict[str, Any] | None = None
+    for corr in records:
+        if corr.get("kind") == "route":
+            last_route = corr
+            continue
+        if corr.get("kind") != "lane_correction":
+            continue
+        if cursor is not None and float(corr.get("ts", 0)) <= cursor:
+            continue
+        row = {
+            "kind": "lane_correction",
+            "from_lane": corr.get("from_lane"),
+            "to_lane": corr.get("to_lane"),
+            "method": (last_route or {}).get("method"),
+            "week": _week(float(corr.get("ts", 0))),
+            "schema": SCHEMA_VERSION,
+        }
+        correction_rows.append((float(corr.get("ts", 0)), row))
+    correction_rows.sort(key=lambda p: p[0])
+    all_rows = sorted(rows + [row for _, row in correction_rows],
+                      key=lambda r: (r["kind"] != "lane_correction",))
+    by_correction: dict[str, int] = {}
+    for _, c in correction_rows:
+        pair = f"{c['from_lane']}->{c['to_lane']}"
+        by_correction[pair] = by_correction.get(pair, 0) + 1
+
     summary = {
         "n_rows": len(rows),
         "dropped_no_route": dropped_no_route,
         "by_rated": dict(Counter(r["rated"] for r in rows)),
         "by_lane": dict(Counter(r["route_lane"] for r in rows)),
         "by_arm": dict(Counter(f'{r["route_model"]}@{r["route_effort"]}' for r in rows)),
+        "n_corrections": len(correction_rows),
+        "by_correction": by_correction,
         "cursor": cursor if cursor is not None else read_cursor(),
         "schema": SCHEMA_VERSION,
     }
-    return rows, summary
+    return all_rows, summary
 
 
 def redact(rows: list[dict[str, Any]], salt: bytes) -> list[dict[str, Any]]:
@@ -320,7 +360,7 @@ def run(dry_run: bool = False, rotate: bool = False, repo_id: str = REPO_ID,
         salt, state["salt"] = bytes.fromhex(salt_path().read_text(encoding="ascii").strip()), "created"
     cursor = 0.0 if rotate else read_cursor()
     records = flywheel.read_labels()
-    eligible = [o for o in records if o.get("kind") == "outcome"
+    eligible = [o for o in records if o.get("kind") in ("outcome", "lane_correction")
                 and float(o.get("ts", 0)) > cursor]
     last_ts = max((float(o["ts"]) for o in eligible), default=cursor)
     rows, summary = redact_report(records, salt, cursor=cursor)
@@ -330,11 +370,12 @@ def run(dry_run: bool = False, rotate: bool = False, repo_id: str = REPO_ID,
         if as_json:
             print(json.dumps({"summary": summary, "rows": rows}, ensure_ascii=False))
         else:
-            print(f"would upload {summary['n_rows']} redacted outcome rows "
+            print(f"would upload {summary['n_rows']} redacted outcome rows and "
+                  f"{summary['n_corrections']} lane-correction rows "
                   f"(dropped_no_route: {summary['dropped_no_route']}; cursor: {summary['cursor']}; "
                   f"salt: {summary['salt']})")
             for label, key in (("by_rated", "by_rated"), ("by_lane", "by_lane"),
-                               ("by_arm", "by_arm")):
+                               ("by_arm", "by_arm"), ("by_correction", "by_correction")):
                 bits = ", ".join(f"{k}={v}" for k, v in summary[key].items())
                 print(f"  {label}: {bits or '(none)'}")
             print("-- exact redacted rows below (grep before you send) --")
