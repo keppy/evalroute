@@ -104,9 +104,13 @@ _NAMED_RUNNERS: dict[str, str] = {
     # maintainer's machine (~/.local/bin/claude.exe): exit 0, one JSON object
     # on stdout with result/is_error/num_turns/total_cost_usd/session_id/
     # terminal_reason. Efforts accepted: low|medium|high|xhigh|max.
+    # `--add-dir <directories...>` is VARIADIC: a prompt placed after it is
+    # eaten as another directory and claude exits 1 with "Input must be
+    # provided either through stdin or as a prompt argument". The `--`
+    # terminator ends the list; keep it immediately before {brief_text}.
     "claude-code": "claude -p --model {model} --effort {effort} "
                    "--output-format json --no-session-persistence "
-                   "--max-turns {max_turns} --add-dir {indir} {brief_text}",
+                   "--max-turns {max_turns} --add-dir {indir} -- {brief_text}",
 }
 
 # Harness-specific effort renames: the routed effort is valid on the route

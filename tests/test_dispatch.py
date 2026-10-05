@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -404,11 +405,22 @@ def test_dispatch_claude_code_dry_run_no_max_turns_no_dangling_flag(home, tmp_pa
 
 
 def test_dispatch_claude_code_dry_run_indir(home, tmp_path, monkeypatch, capsys):
-    rc, out, _ = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
-                                   runner="claude-code", indir=str(tmp_path))
+    rc, out, sidecar = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                         runner="claude-code", indir=str(tmp_path))
     argv_line = next(l for l in out.splitlines() if l.startswith("would run: "))
     assert "--add-dir" in argv_line
     assert str(tmp_path) in argv_line.replace("'", "")
+    # --add-dir is variadic in Claude Code: without a `--` terminator the
+    # prompt is consumed as a directory and claude refuses to run (seen on
+    # the first real hard-lane dispatch). The brief text must come after `--`.
+    from evalroute.dispatch import _NAMED_RUNNERS, _build_runner_argv
+    brief = _make_brief(tmp_path)
+    tokens = _build_runner_argv(_NAMED_RUNNERS["claude-code"], "opus", "high", "nous",
+                                brief, str(tmp_path), 40)
+    assert "--" in tokens
+    assert tokens.index("--add-dir") < tokens.index("--")
+    assert tokens.index("--") == len(tokens) - 2, "`--` must be immediately before the brief text"
+    assert tokens[-1] == brief.read_text(encoding="utf-8")
 
 
 def test_dispatch_claude_code_effort_map(home, tmp_path, monkeypatch, capsys):
