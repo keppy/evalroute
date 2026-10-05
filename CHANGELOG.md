@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.3] - 2026-10-04
+
+### Added
+
+- `evalroute report --demo`: renders a bundled synthetic ledger and train (timestamps
+  relative to now) so the report can be shown before you have data. Never reads or
+  writes your ledger, session store or report; writes `report-demo.html`.
+- Dark projector theme is the default (`--theme light` for the old look); a four-cell
+  "Now" strip (routes today, pending, last outcome, cheapest arm this week); a
+  `provenance` column in the per-lane tally so "measured vs priors" is visible as data.
+- The CLI route card wraps at 100 columns with a hanging indent; `route --wide` keeps the
+  one-line-per-field form. The `hermes-chat` card is byte-for-byte unchanged.
+
+### Fixed
+
+- Report: pending table showed every arm as `? @ ?` with age `?` (read raw-record keys
+  off projected rows); "cheapest arm this week" compared a local-time string as UTC
+  (Sunday evening PDT flipped the ISO week); the HTML Now strip and `--json` `now` were
+  two computations and disagreed on "routes today".
+- `scripts/publish_dataset.py` read `data/routes.yaml` and `plugin.yaml`, paths that left
+  with the 0.6.0 split; the dataset card now tells the README's story in the README's
+  order (`docs/dataset-card.md` is the rendered copy).
+
 ## [0.8.2] - 2026-10-04
 
 ### Fixed
