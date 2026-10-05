@@ -121,6 +121,25 @@ def setup_cli(subparser) -> None:
                            help="Dataset repo id (default: keppy/evalroute-flywheel)")
     contrib_p.add_argument("--json", action="store_true",
                            help="Wrap the dry-run summary + rows in one JSON object")
+    export_p = subs.add_parser("export-cases",
+                               help="Write human-asserted lane labels as thomas "
+                                    "encoder cases (JSONL; local file, counts only "
+                                    "on stdout)")
+    export_p.add_argument("--out", required=True,
+                          help="Output JSONL path (UTF-8, LF; one case per line)")
+    export_p.add_argument("--tasksets",
+                          help="Dir or glob of Tier-A tasksets "
+                               "(e.g. examples/artifacts; rows -> taskset:<id>)")
+    export_p.add_argument("--seed-text", action="store_true",
+                          help="Add one hint row and one keywords row per lane "
+                               "from the route table (id: seed:<lane>:<kind>)")
+    export_p.add_argument("--min-per-lane", type=int, default=20,
+                          help="Flag lanes with fewer cases (default: 20; a "
+                               "finding, not an error)")
+    export_p.add_argument("--strict", action="store_true",
+                          help="Exit 3 when any lane is below --min-per-lane")
+    export_p.add_argument("--json", action="store_true",
+                          help="Print the summary as one JSON object")
     subparser.set_defaults(func=evalroute_cli)
 
 
@@ -147,6 +166,15 @@ def evalroute_cli(args) -> int:
                               as_json=bool(getattr(args, "json", False)))
     if action == "report":
         return report.run(args)
+    if action == "export-cases":
+        from . import export_cases
+        return export_cases.run_export(
+            out=__import__("pathlib").Path(args.out),
+            tasksets=getattr(args, "tasksets", "") or "",
+            seed_text=bool(getattr(args, "seed_text", False)),
+            min_per_lane=int(getattr(args, "min_per_lane", 20)),
+            strict=bool(getattr(args, "strict", False)),
+            as_json=bool(getattr(args, "json", False)))
     if action == "rate":
         as_json = bool(getattr(args, "json", False))
         parts = [getattr(args, "verdict", None) or ""]
