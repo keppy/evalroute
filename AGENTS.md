@@ -64,7 +64,8 @@ Encoder (opt-in local classifier between rules and the LLM fallback; needs
 [--tasksets <dir>] [--seed-text]` writes your pinned routes as training rows (local file, counts
 only on stdout) → thomas `examples/evalroute_lane_encoder.py` (CPU, 30 s) → `evalroute
 install-encoder <dir>`. Day-one floor: `install-encoder keppy/evalroute-lane-encoder` (public
-rows only; five lanes scaffolded). `install-encoder --remove` restores rules (+ LLM).
+rows only; five lanes scaffolded; data: github.com/keppy/evalroute-tasks). `install-encoder
+--remove` restores rules (+ LLM).
 
 `sync` downloads data, not code, on your explicit command, pinned to a dataset commit
 sha, validated before activation; routing works offline on the bundled table without

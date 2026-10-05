@@ -259,7 +259,11 @@ math hit; the rules now guard negated keywords). So routing is layered:
    on public tasksets, lane seed text and LLM paraphrases of the lane
    descriptions; five of nine lanes have never seen a real task. The
    learning curve behind it says real rows are worth ~10× a paraphrase, so
-   the shared model is a floor, not the target.
+   the shared model is a floor, not the target. Its data is moving to a
+   public, human-reviewed corpus — [`keppy/evalroute-tasks`](https://github.com/keppy/evalroute-tasks)
+   (real tasks with asserted lanes, no paraphrases); contribute a reviewed
+   row there, especially for an empty lane, and the next shared encoder
+   learns it.
 3. **Weak signal** (0-1 hits, no encoder or it abstained) — one structured call
    via the facade set with `routing.set_llm_facade` (the host's own model and
    auth; the plugin sets it at register time, but **it consumes tokens and may
