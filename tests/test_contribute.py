@@ -153,6 +153,36 @@ def test_arm_attribution_derived(home):
     assert attrs == {"explicit_user", "unknown"}
 
 
+def test_harness_row_kept_and_by_arm_key(home):
+    records = _ledger(home)
+    records.append({"kind": "outcome", "ts": BASE_TS + 80, "rated": "pass",
+                    "route_lane": "routine-coding", "route_model": "claude-opus-4",
+                    "route_effort": "high", "actual_model": "claude-opus-4",
+                    "actual_effort": "high", "arm_attribution": "explicit_user",
+                    "harness": "claude-code",
+                    "consumes_id": "r3"})
+    records.insert(1, {"kind": "route", "id": "r3", "ts": BASE_TS + 75,
+                       "task": "write tests", "lane": "routine-coding",
+                       "model": "claude-opus-4", "effort": "high",
+                       "method": "pinned", "confidence": 1.0})
+    rows, summary = contribute.redact_report(records, b"\x01" * 32)
+    cc = [r for r in rows if r.get("harness") == "claude-code"]
+    assert len(cc) == 1 and cc[0]["route_model"] == "claude-opus-4"
+    assert summary["by_arm"]["claude-opus-4@high@claude-code"] == 1
+    assert summary["by_harness"] == {"hermes": 2, "claude-code": 1}
+    # hermes rows keep the bare model@effort key
+    assert "z-ai/glm-5.3@high" in summary["by_arm"]
+
+
+def test_harness_missing_defaults_to_hermes(home):
+    rows = [r for r in contribute.redact(_ledger(home), b"\x01" * 32)
+            if r["kind"] == "outcome"]
+    assert all(r["harness"] == "hermes" for r in rows)
+    _, summary = contribute.redact_report(_ledger(home), b"\x01" * 32)
+    assert "z-ai/glm-5.3@high" in summary["by_arm"]
+    assert summary["by_harness"] == {"hermes": 2}
+
+
 # ---------------------------------------------------------------- salt/cursor
 
 

@@ -23,6 +23,7 @@ caller-stated). Session capture is Hermes-shaped; other runners record
 | name | template | verified how |
 | --- | --- | --- |
 | `hermes` (default) | `hermes chat -Q --oneshot -m {model} --provider {provider} --reasoning {effort} --query-file {brief}` | this repo's own spawn path; exercised by the test suite |
+| `claude-code` | `claude -p --model {model} --effort {effort} --output-format json --no-session-persistence --max-turns {max_turns} --add-dir {indir} {brief_text}` | flags read from Claude Code 2.1.289 `-p` mode on the maintainer's machine (`~/.local/bin/claude.exe`), 2026-10-05: exit 0, one JSON object on stdout (`result`, `is_error`, `num_turns`, `total_cost_usd`, `session_id`, `terminal_reason`). Efforts accepted: `low medium high xhigh max` (`none`/`minimal` map to `low`). `--permission-mode` is deliberately not in the template — pass it via a `--runner` template override or Claude Code's own settings; never default to `bypassPermissions`. |
 
 ## Unverified sketches — flags NOT checked against the real CLIs
 
@@ -32,9 +33,6 @@ CLI's own `--help` before relying on them, and move a runner to the verified
 table only after that check.
 
 ```bash
-# Claude Code — prompt inline, text output
-evalroute dispatch brief.md --runner "claude -p --model {model} {brief_text}"
-
 # Codex CLI — non-interactive exec; effort mapping unclear (no --reasoning)
 evalroute dispatch brief.md --runner "codex exec {brief_text}"
 

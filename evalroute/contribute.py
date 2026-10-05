@@ -64,6 +64,7 @@ KEPT = (
     "rated",
     "facets",
     "max_turns",
+    "harness",
     "week",
     "task_hash",
     "corrected",
@@ -253,6 +254,9 @@ def redact_report(records: list[dict[str, Any]], salt: bytes,
             "rated": rated,
             "facets": _facet_counts(out.get("facets") or route.get("facets")),
             "max_turns": out.get("max_turns"),
+            # Old rows predate the key; hermes was the only harness then, so
+            # the default is written in rather than left missing.
+            "harness": out.get("harness") or "hermes",
             "week": _week(float(out.get("ts", 0))),
             "task_hash": _task_hash(route["task"], salt),
             "corrected": corrected,
@@ -292,12 +296,20 @@ def redact_report(records: list[dict[str, Any]], salt: bytes,
         pair = f"{c['from_lane']}->{c['to_lane']}"
         by_correction[pair] = by_correction.get(pair, 0) + 1
 
+    def _arm_key(r: dict[str, Any]) -> str:
+        # The harness is part of the arm; hermes rows keep the bare
+        # model@effort form so existing keys (and their consumers) are stable.
+        if r.get("harness") and r["harness"] != "hermes":
+            return f'{r["route_model"]}@{r["route_effort"]}@{r["harness"]}'
+        return f'{r["route_model"]}@{r["route_effort"]}'
+
     summary = {
         "n_rows": len(rows),
         "dropped_no_route": dropped_no_route,
         "by_rated": dict(Counter(r["rated"] for r in rows)),
         "by_lane": dict(Counter(r["route_lane"] for r in rows)),
-        "by_arm": dict(Counter(f'{r["route_model"]}@{r["route_effort"]}' for r in rows)),
+        "by_arm": dict(Counter(_arm_key(r) for r in rows)),
+        "by_harness": dict(Counter(r.get("harness") or "hermes" for r in rows)),
         "n_corrections": len(correction_rows),
         "by_correction": by_correction,
         "cursor": cursor if cursor is not None else read_cursor(),
@@ -375,7 +387,8 @@ def run(dry_run: bool = False, rotate: bool = False, repo_id: str = REPO_ID,
                   f"(dropped_no_route: {summary['dropped_no_route']}; cursor: {summary['cursor']}; "
                   f"salt: {summary['salt']})")
             for label, key in (("by_rated", "by_rated"), ("by_lane", "by_lane"),
-                               ("by_arm", "by_arm"), ("by_correction", "by_correction")):
+                               ("by_arm", "by_arm"), ("by_harness", "by_harness"),
+                               ("by_correction", "by_correction")):
                 bits = ", ".join(f"{k}={v}" for k, v in summary[key].items())
                 print(f"  {label}: {bits or '(none)'}")
             print("-- exact redacted rows below (grep before you send) --")
