@@ -18,6 +18,7 @@ from typing import Any
 
 import yaml
 
+from . import classify_encoder  # noqa: E402
 from .paths import hermes_home
 
 logger = logging.getLogger(__name__)
@@ -363,6 +364,11 @@ def route_full(task: str) -> tuple[dict[str, Any], float, list[str], str, list[s
     facets = facets_for_hits(hit_lane_ids)
     if distinct >= _LLM_MIN_HITS:
         return lane, conf, hits, "rules-strong", facets
+    if classify_encoder.is_installed():
+        enc_lane, enc_conf = classify_encoder.classify(task)
+        if enc_lane is not None and enc_conf >= classify_encoder.threshold():
+            return (_lane_by_id(enc_lane), enc_conf, hits, "encoder",
+                    facets_for_hits([enc_lane]))
     llm_lane, llm_conf, llm_facets = _llm_fallback(task, lanes)
     if llm_lane is not None:
         return llm_lane, llm_conf, hits, "llm", (llm_facets or facets_for_hits([llm_lane["id"]]))
@@ -458,16 +464,29 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
         lines.append(f"escalation: {lane['escalation']} (when coverage gaps or the task turns out harder)")
     if pinned:
         lines.append("classification: lane pinned by caller")
-    elif method == "llm":
-        lines.append(f"classification: LLM fallback ({conf:.2f}) - rules had weak signal "
-                     f"({'no keyword hit' if not hits else 'single ambiguous hit'})")
-    elif hits:
-        shown = ", ".join(sorted(set(hits))[:4])
-        more = "" if len(set(hits)) <= 4 else f" (+{len(set(hits)) - 4} more)"
-        lines.append(f"classification: rules match ({conf:.2f}) on: {shown}{more}")
+    elif method == "encoder":
+        m = (classify_encoder.load() or {}).get("metrics", {})
+        if m.get("eval_n"):
+            basis = f"{float(m['eval_accuracy']):.2f} on {int(m['eval_n'])} real held-out tasks"
+        else:
+            basis = f"{float(m.get('calib_accuracy', 0.0)):.2f} calib"
+        lines.append(f"classification: encoder (opt-in) {basis} · conf {conf:.2f}")
     else:
-        lines.append("classification: no keyword hit - defaulted to long-doc-reading; "
-                     "pass --lane <id> to pin, or say the task in more words")
+        # An installed encoder that did not decide this route abstained (below
+        # threshold or unknown label); say so on whichever fallback line follows.
+        abstained = (" (encoder abstained)"
+                     if classify_encoder.is_installed() and method != "rules-strong" else "")
+        if method == "llm":
+            lines.append(f"classification: LLM fallback ({conf:.2f}) - rules had weak signal "
+                         f"({'no keyword hit' if not hits else 'single ambiguous hit'})"
+                         f"{abstained}")
+        elif hits:
+            shown = ", ".join(sorted(set(hits))[:4])
+            more = "" if len(set(hits)) <= 4 else f" (+{len(set(hits)) - 4} more)"
+            lines.append(f"classification: rules match ({conf:.2f}) on: {shown}{more}{abstained}")
+        else:
+            lines.append("classification: no keyword hit - defaulted to long-doc-reading; "
+                         f"pass --lane <id> to pin, or say the task in more words{abstained}")
     lines.append(f"basis: {lane.get('provenance', 'unknown')}")
     lines.append(_table_line())
     if lane.get("notes"):
@@ -524,8 +543,9 @@ def _maybe_wrap(card: str, wrap: bool = True) -> str:
             out.append(line)
             continue
         head, _, rest = line.partition(": ")
+        pad = " " * max(1, 6 - len(head))  # never glue head to body
         out.extend(textwrap.wrap(
-            f"{head}:{' ' * (6 - len(head))}{rest}", width=100,
+            f"{head}:{pad}{rest}", width=100,
             initial_indent="", subsequent_indent=" " * 7,
             break_long_words=False, break_on_hyphens=False) or [line])
     return "\n".join(out)

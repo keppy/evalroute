@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from . import dataset, dispatch, flywheel, report, routing
 from .routing import _lib_version, _route_for_args, _tool_result, install_routes, set_surface
@@ -121,6 +122,32 @@ def setup_cli(subparser) -> None:
                            help="Dataset repo id (default: keppy/evalroute-flywheel)")
     contrib_p.add_argument("--json", action="store_true",
                            help="Wrap the dry-run summary + rows in one JSON object")
+    export_p = subs.add_parser("export-cases",
+                               help="Write human-asserted lane labels as thomas "
+                                    "encoder cases (JSONL; local file, counts only "
+                                    "on stdout)")
+    export_p.add_argument("--out", required=True,
+                          help="Output JSONL path (UTF-8, LF; one case per line)")
+    export_p.add_argument("--tasksets",
+                          help="Dir or glob of Tier-A tasksets "
+                               "(e.g. examples/artifacts; rows -> taskset:<id>)")
+    export_p.add_argument("--seed-text", action="store_true",
+                          help="Add one hint row and one keywords row per lane "
+                               "from the route table (id: seed:<lane>:<kind>)")
+    export_p.add_argument("--min-per-lane", type=int, default=20,
+                          help="Flag lanes with fewer cases (default: 20; a "
+                               "finding, not an error)")
+    export_p.add_argument("--strict", action="store_true",
+                          help="Exit 3 when any lane is below --min-per-lane")
+    export_p.add_argument("--json", action="store_true",
+                          help="Print the summary as one JSON object")
+    enc_p = subs.add_parser("install-encoder",
+                            help="Install a CONTRACT §4 encoder artifact "
+                                 "(HF save_pretrained dir) as the classification "
+                                 "fallback; --remove to uninstall")
+    enc_p.add_argument("dir", nargs="?", help="Artifact directory to copy from")
+    enc_p.add_argument("--remove", action="store_true", help="Delete the installed artifact")
+    enc_p.add_argument("--json", action="store_true", help="Print the result as one JSON object")
     subparser.set_defaults(func=evalroute_cli)
 
 
@@ -147,6 +174,19 @@ def evalroute_cli(args) -> int:
                               as_json=bool(getattr(args, "json", False)))
     if action == "report":
         return report.run(args)
+    if action == "export-cases":
+        from . import export_cases
+        return export_cases.run_export(
+            out=__import__("pathlib").Path(args.out),
+            tasksets=getattr(args, "tasksets", "") or "",
+            seed_text=bool(getattr(args, "seed_text", False)),
+            min_per_lane=int(getattr(args, "min_per_lane", 20)),
+            strict=bool(getattr(args, "strict", False)),
+            as_json=bool(getattr(args, "json", False)))
+    if action == "install-encoder":
+        return install_encoder(dir_arg=getattr(args, "dir", None),
+                               remove=bool(getattr(args, "remove", False)),
+                               as_json=bool(getattr(args, "json", False)))
     if action == "rate":
         as_json = bool(getattr(args, "json", False))
         parts = [getattr(args, "verdict", None) or ""]
@@ -204,6 +244,74 @@ def evalroute_cli(args) -> int:
         return 0
     print(_WORKFLOW_EPILOG)
     return 2
+
+
+def _looks_like_hf_id(s: str | None) -> bool:
+    """`owner/name` with no path separators beyond the one slash and no drive letter."""
+    if not s or "\\" in s or s.count("/") != 1 or s.startswith((".", "/")) or ":" in s:
+        return False
+    owner, name = s.split("/")
+    return bool(owner) and bool(name) and not Path(s).exists()
+
+
+def install_encoder(dir_arg: str | None, remove: bool = False,
+                    as_json: bool = False) -> int:
+    """Validate and copy a CONTRACT §4 encoder artifact into <home>/evalroute/encoder/."""
+    import shutil
+
+    from .classify_encoder import encoder_dir, is_installed
+
+    d = encoder_dir()
+    if remove:
+        if d.exists():
+            shutil.rmtree(d)
+        msg = {"installed": False, "removed": True, "encoder_dir": str(d)}
+        print(json.dumps(msg) if as_json else f"encoder removed ({d})")
+        return 0
+    src = Path(dir_arg) if dir_arg else None
+    if src is not None and not src.is_dir() and _looks_like_hf_id(dir_arg):
+        # `owner/name` → pull the model repo (needs the [hub] extra).
+        try:
+            import huggingface_hub
+        except ImportError:
+            print("evalroute: install-encoder from a Hub id needs the huggingface_hub package: "
+                  "pip install 'evalroute[hub]'")
+            return 2
+        allow = ["*.json", "*.safetensors", "*.txt", "*.model"]
+        src = Path(huggingface_hub.snapshot_download(dir_arg, repo_type="model", allow_patterns=allow))
+    if src is None or not src.is_dir():
+        print("evalroute: install-encoder needs an artifact directory or a Hub id (owner/name)")
+        return 2
+    required = ("config.json", "label2id.json", "temperature.json", "metrics.json")
+    missing = [f for f in required if not (src / f).is_file()]
+    if missing or not any(src.glob("*.safetensors")) and not any(src.glob("*.bin")):
+        print(f"evalroute: artifact incomplete; missing: {', '.join(missing) or 'model weights'}")
+        return 2
+    if d.exists():
+        shutil.rmtree(d)
+    shutil.copytree(src, d)
+    metrics = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    label2id = json.loads((d / "label2id.json").read_text(encoding="utf-8"))
+    known = {lane["id"] for lane in routing._load_routes()}
+    unknown = sorted(lab for lab in label2id if lab not in known)
+    msg = {
+        "installed": True,
+        "encoder_dir": str(d),
+        "contract_version": metrics.get("contract_version"),
+        "calib_accuracy": metrics.get("calib_accuracy"),
+        "num_labels": metrics.get("num_labels"),
+        "unknown_labels": unknown,
+    }
+    if as_json:
+        print(json.dumps(msg))
+    else:
+        print(f"encoder installed: {d}")
+        print(f"contract_version: {metrics.get('contract_version')}  "
+              f"calib_accuracy: {metrics.get('calib_accuracy')}  "
+              f"num_labels: {metrics.get('num_labels')}")
+        if unknown:
+            print(f"warning: labels that are not lane ids: {', '.join(unknown)}")
+    return 0
 
 
 def main() -> int:
