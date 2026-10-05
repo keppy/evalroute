@@ -228,3 +228,12 @@ def test_endpoint_generic_env_wins_over_openrouter(monkeypatch):
     monkeypatch.setenv("EVALROUTE_LLM_API_KEY", "gen-key")
     url, key = ac._endpoint()
     assert url == "https://example.test/v1/chat/completions" and key == "gen-key"
+
+
+def test_resume_counts_existing_aug_rows():
+    """Re-running on a partial output fills gaps only and never reuses an aug id."""
+    rows = [{"id": "r1", "text": "real one", "label": "prose"},
+            {"id": "aug:prose:7", "text": "old aug", "label": "prose"}]
+    plan = {p["lane"]["id"]: p for p in augment.build_plan(rows, per_lane=5)}
+    assert plan["prose"]["real"] == 1 and plan["prose"]["have_aug"] == 1
+    assert plan["prose"]["target"] == 3

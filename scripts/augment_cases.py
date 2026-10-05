@@ -57,6 +57,10 @@ class ChatClient:
         body = json.dumps({
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
+            # Reasoning models think first and some endpoints make that
+            # mandatory; a 200-token cap returns content=None. Ten lines plus
+            # a short chain of thought fit comfortably here.
+            "max_tokens": 3000,
         }).encode("utf-8")
         req = urllib.request.Request(
             self.url, data=body,
@@ -68,6 +72,9 @@ class ChatClient:
         self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
         self.completion_tokens += int(usage.get("completion_tokens") or 0)
         text = payload["choices"][0]["message"]["content"]
+        if not text:
+            raise RuntimeError("empty content (finish_reason="
+                               f"{payload['choices'][0].get('finish_reason')!r})")
         return [ln.strip() for ln in text.splitlines()]
 
 
@@ -118,21 +125,32 @@ def _prompt_for(lane: dict, lanes: list[dict], examples: list[str]) -> str:
 def _count_real(rows: list[dict], lane_id: str) -> int:
     """Real rows for a lane: ledger, ledger#2 correction duplicates, taskset.
 
-    seed:<lane>:... rows are seeds, not real counts.
+    seed:<lane>:... rows are seeds, not real counts; aug:<lane>:... rows are
+    previous augmentation output, counted separately (see build_plan).
     """
     return sum(1 for r in rows
                if r.get("label") == lane_id
-               and not str(r.get("id", "")).startswith("seed:"))
+               and not str(r.get("id", "")).startswith(("seed:", "aug:")))
+
+
+def _count_aug(rows: list[dict], lane_id: str) -> int:
+    return sum(1 for r in rows
+               if r.get("label") == lane_id and str(r.get("id", "")).startswith("aug:"))
 
 
 def build_plan(rows: list[dict], per_lane: int) -> list[dict]:
-    """Per-lane plan entries sorted by lane order in the table."""
+    """Per-lane plan entries sorted by lane order in the table.
+
+    Resumable: aug rows already in the input count toward the target, so
+    re-running on a partial output only fills the gaps.
+    """
     lanes = _load_routes()
     plan = []
     for lane in lanes:
         real = _count_real(rows, lane["id"])
-        target = per_lane - real
-        plan.append({"lane": lane, "real": real, "target": target,
+        have_aug = _count_aug(rows, lane["id"])
+        target = per_lane - real - have_aug
+        plan.append({"lane": lane, "real": real, "have_aug": have_aug, "target": target,
                      "calls": max(0, math.ceil(target / PER_CALL)) if target > 0 else 0})
     return plan
 
@@ -184,7 +202,7 @@ def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
               "or OPENROUTER_API_KEY", file=sys.stderr)
         return 2
     generated: dict[str, list[str]] = {ln["id"]: [] for ln in lanes}
-    real_norm = {_norm(r["text"]) for r in rows if not str(r.get("id", "")).startswith("seed:")}
+    real_norm = {_norm(r["text"]) for r in rows}  # everything already present, seeds and prior aug too
     short: dict[str, int] = {}
     for p in plan:
         lane_id = p["lane"]["id"]
@@ -213,10 +231,12 @@ def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
                     made += 1
         short[lane_id] = min(made, max(p["target"], 0))
     out = list(rows)
-    n = 0
+    # Resume-safe ids: continue numbering after any aug rows already present.
+    n = max([int(str(r["id"]).rsplit(":", 1)[-1]) for r in rows
+             if str(r.get("id", "")).startswith("aug:")] or [0])
     for p in plan:
         lane_id = p["lane"]["id"]
-        for text in generated[lane_id][:p["target"]]:
+        for text in generated[lane_id][:max(p["target"], 0)]:
             n += 1
             out.append({"id": f"aug:{lane_id}:{n}", "text": text, "label": lane_id})
     out_path.write_text("".join(json.dumps(r) + "\n" for r in out), encoding="utf-8")
