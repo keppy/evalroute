@@ -234,15 +234,17 @@ def handle_rate(raw_args: str) -> str:
     rating = args[0].lower()
     if rating in ("p", "f"):
         rating = "pass" if rating == "p" else "fail"
-    lane_fix = route_id = note = confirmed_model = confirmed_effort = max_turns = ""
+    lane_fix = route_id = note = confirmed_model = confirmed_effort = max_turns = harness = ""
     i = 1
     while i < len(args):
-        if args[i] in ("--lane", "--route-id", "--model", "--effort", "--max-turns") and i + 1 < len(args):
+        if args[i] in ("--lane", "--route-id", "--model", "--effort", "--max-turns",
+                       "--harness") and i + 1 < len(args):
             flag, value = args[i], args[i + 1]
             if flag == "--lane": lane_fix = value
             elif flag == "--route-id": route_id = value
             elif flag == "--model": confirmed_model = value
             elif flag == "--max-turns": max_turns = value
+            elif flag == "--harness": harness = value
             else: confirmed_effort = value.lower()
             i += 2
         elif args[i] == "--note" and i + 1 < len(args):
@@ -289,6 +291,9 @@ def handle_rate(raw_args: str) -> str:
         "arm_attribution": "explicit_user" if confirmed_model else "unknown",
         "method": route.get("method"), "confidence": route.get("confidence"),
         "max_turns": max_turns_val,
+        # The harness is part of the arm; every row carries the key (the
+        # default is written in so old ledgers and new rows compare).
+        "harness": harness or "hermes",
         "consumes": route.get("ts"), "consumes_id": route.get("id"),
     }
     if route.get("facets"):

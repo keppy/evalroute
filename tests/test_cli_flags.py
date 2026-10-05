@@ -110,3 +110,20 @@ def test_cli_route_lane_only_json(home, capsys):
     assert rc == 0
     env = json.loads(out.strip())
     assert env["pinned"] is True
+
+
+def test_cli_rate_note_does_not_swallow_harness_and_max_turns(home, capsys):
+    """handle_rate reads everything after --note as the note, so the CLI must put
+    --note last; otherwise --harness/--max-turns silently record as hermes/None."""
+    lane = routing._lane_by_id("prose")
+    route_id = flywheel.note_route("test note ordering on the rate path", lane, "llm", 0.8)
+    from types import SimpleNamespace
+    ns = SimpleNamespace(evalroute_action="rate", verdict="pass", lane=None,
+                         route_id=route_id, model="haiku", effort="low",
+                         note="a note with several words", max_turns=2,
+                         harness="claude-code", dry_run=False)
+    assert cli.evalroute_cli(ns) == 0
+    outcome = next(r for r in flywheel.read_labels() if r["kind"] == "outcome")
+    assert outcome["harness"] == "claude-code"
+    assert outcome["max_turns"] == 2
+    assert outcome["note"] == "a note with several words"

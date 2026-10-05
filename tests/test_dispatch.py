@@ -362,3 +362,182 @@ def test_follow_timeout_kills_child(home, tmp_path, monkeypatch, capsys):
                         follow=True))
     assert rc == 124
     assert brief.with_name("brief.report.md").exists()
+
+
+# ------------------------------------------------------------------ harness
+
+def _dry_run_dispatch(home, tmp_path, monkeypatch, capsys, **kw):
+    brief = _make_brief(tmp_path)
+    args = dict(brief=str(brief), lane="hard-agentic-coding", indir=None,
+                task=None, out=None, timeout=None, rate_on_exit=None,
+                dry_run=True, runner=None, model_override=None,
+                effort_override=None, max_turns=None)
+    args.update(kw)
+    rc = _dispatch(args)
+    out = capsys.readouterr().out
+    sidecar = json.loads(brief.with_name("brief.dispatch.json")
+                         .read_text(encoding="utf-8"))["runs"][-1]
+    return rc, out, sidecar
+
+
+def test_dispatch_claude_code_dry_run_argv(home, tmp_path, monkeypatch, capsys):
+    brief = _make_brief(tmp_path)
+    rc, out, _ = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                   runner="claude-code", max_turns=7)
+    assert rc == 0
+    argv_line = next(l for l in out.splitlines() if l.startswith("would run: "))
+    assert "claude -p --model " in argv_line
+    assert "--effort " in argv_line
+    assert "--output-format json" in argv_line
+    assert "--no-session-persistence" in argv_line
+    assert "--max-turns 7" in argv_line
+    assert "--query-file" not in argv_line
+    assert argv_line.strip().endswith("Do the thing")  # brief_text last
+
+
+def test_dispatch_claude_code_dry_run_no_max_turns_no_dangling_flag(home, tmp_path, monkeypatch, capsys):
+    rc, out, _ = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                   runner="claude-code")
+    argv_line = next(l for l in out.splitlines() if l.startswith("would run: "))
+    assert "--max-turns" not in argv_line
+    assert "--add-dir" not in argv_line  # no --in either
+
+
+def test_dispatch_claude_code_dry_run_indir(home, tmp_path, monkeypatch, capsys):
+    rc, out, _ = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                   runner="claude-code", indir=str(tmp_path))
+    argv_line = next(l for l in out.splitlines() if l.startswith("would run: "))
+    assert "--add-dir" in argv_line
+    assert str(tmp_path) in argv_line.replace("'", "")
+
+
+def test_dispatch_claude_code_effort_map(home, tmp_path, monkeypatch, capsys):
+    # Claude Code accepts low..max; none/minimal must arrive as low.
+    rc, out, _ = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                   runner="claude-code", effort_override="minimal")
+    argv_line = next(l for l in out.splitlines() if l.startswith("would run: "))
+    assert "--effort low" in argv_line
+    assert "--effort minimal" not in argv_line
+
+
+def test_dispatch_harness_in_sidecar(home, tmp_path, monkeypatch, capsys):
+    _make_stub(tmp_path, monkeypatch)
+    brief = _make_brief(tmp_path)
+    _dispatch(dict(brief=str(brief), lane="routine-coding", indir=None, task=None,
+                   out=None, timeout=None, rate_on_exit=None, dry_run=False,
+                   runner=None))
+    rec = json.loads(brief.with_name("brief.dispatch.json")
+                     .read_text(encoding="utf-8"))["runs"][-1]
+    assert rec["harness"] == "hermes"
+
+
+def test_dispatch_raw_template_harness_is_argv0_stem(home, tmp_path, monkeypatch, capsys):
+    brief = _make_brief(tmp_path)
+    rc, out, sidecar = _dry_run_dispatch(
+        home, tmp_path, monkeypatch, capsys,
+        runner="mytool {brief_text}")
+    assert rc == 0
+    assert sidecar["harness"] == "mytool"
+
+
+def _claude_shaped_stub(tmp_path, monkeypatch, argv_file):
+    stub = tmp_path / "claude.py"  # argv[0] stem `claude` -> harness claude-code
+    stub.write_text(r'''
+import json, os, sys
+with open(os.environ["STUB_ARGV_FILE"], "a", encoding="utf-8") as f:
+    f.write(repr(sys.argv) + "\n")
+print(json.dumps({
+    "result": "CLAUDE REPORT BODY",
+    "is_error": False,
+    "num_turns": 4,
+    "total_cost_usd": 0.12,
+    "session_id": "cc-session-1",
+    "terminal_reason": "completed",
+}))
+sys.exit(0)
+''', encoding="utf-8")
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    monkeypatch.setenv("STUB_ARGV_FILE", str(argv_file))
+    # the stub is spawned via `python stub.py`, so argv[0] is python; pin the
+    # harness with the documented env override instead
+    monkeypatch.setenv("EVALROUTE_HARNESS", "claude-code")
+
+
+def test_dispatch_claude_code_json_capture(home, tmp_path, monkeypatch, capsys):
+    argv_file = tmp_path / "argv.log"
+    _claude_shaped_stub(tmp_path, monkeypatch, argv_file)
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="hard-agentic-coding",
+                        indir=None, task=None, out=None, timeout=None,
+                        rate_on_exit=None, dry_run=False, runner=None))
+    assert rc == 0
+    report = brief.with_name("brief.report.md")
+    assert report.read_text(encoding="utf-8") == "CLAUDE REPORT BODY"
+    rec = json.loads(brief.with_name("brief.dispatch.json")
+                     .read_text(encoding="utf-8"))["runs"][-1]
+    assert rec["harness"] == "claude-code"
+    assert rec["session_id"] == "cc-session-1"
+    assert rec["harness_turns"] == 4
+    assert rec["harness_cost_usd"] == 0.12
+    assert rec["harness_terminal"] == "completed"
+    out = capsys.readouterr().out
+    assert ", claude-code)" in out
+    assert " --harness claude-code" in out
+
+
+def test_dispatch_claude_code_is_error_counts_as_nonzero_exit(home, tmp_path, monkeypatch, capsys):
+    argv_file = tmp_path / "argv.log"
+    stub = tmp_path / "claude.py"
+    stub.write_text(r'''
+import json, os, sys
+with open(os.environ["STUB_ARGV_FILE"], "a", encoding="utf-8") as f:
+    f.write(repr(sys.argv) + "\n")
+print(json.dumps({"result": "boom", "is_error": True, "num_turns": 1,
+                  "total_cost_usd": 0.0, "session_id": "s",
+                  "terminal_reason": "error"}))
+sys.exit(0)
+''', encoding="utf-8")
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    monkeypatch.setenv("STUB_ARGV_FILE", str(argv_file))
+    monkeypatch.setenv("EVALROUTE_HARNESS", "claude-code")
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="hard-agentic-coding",
+                        indir=None, task=None, out=None, timeout=None,
+                        rate_on_exit="fail", dry_run=False, runner=None))
+    assert rc == 1
+    outcomes = _outcomes()
+    assert outcomes and outcomes[-1]["rated"] == "fail"
+    assert outcomes[-1].get("harness") == "claude-code"
+
+
+def test_dispatch_model_effort_override(home, tmp_path, monkeypatch, capsys):
+    argv_file = _make_stub(tmp_path, monkeypatch)
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="hard-agentic-coding",
+                        indir=None, task=None, out=None, timeout=None,
+                        rate_on_exit=None, dry_run=False, runner=None,
+                        model_override="claude-opus-4", effort_override="high"))
+    err = capsys.readouterr()
+    assert rc == 0
+    argv = eval(argv_file.read_text(encoding="utf-8").strip())
+    lane = routing._lane_by_id("hard-agentic-coding")
+    assert lane["model"] not in argv  # routed arm not spawned
+    assert argv[argv.index("-m") + 1] == "claude-opus-4"
+    assert argv[argv.index("--reasoning") + 1] == "high"
+    assert "arm override:" in err.err
+    rec = json.loads(brief.with_name("brief.dispatch.json")
+                     .read_text(encoding="utf-8"))["runs"][-1]
+    assert rec["model"] == "claude-opus-4" and rec["effort"] == "high"
+    assert f"--model claude-opus-4" in rec["rate_line"]
+
+
+def test_dispatch_bad_effort_override_exit_2(home, tmp_path, monkeypatch, capsys):
+    _make_stub(tmp_path, monkeypatch)
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=None,
+                        task=None, out=None, timeout=None, rate_on_exit=None,
+                        dry_run=False, runner=None, model_override=None,
+                        effort_override="ultra"))
+    err = capsys.readouterr()
+    assert rc == 2
+    assert "invalid --effort" in err.err

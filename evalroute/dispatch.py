@@ -100,7 +100,37 @@ def _build_argv(model: str, effort: str, provider: str, brief: Path,
 _NAMED_RUNNERS: dict[str, str] = {
     "hermes": "hermes chat -Q --oneshot -m {model} --provider {provider} "
               "--reasoning {effort} --query-file {brief}",
+    # Verified 2026-10-05 against Claude Code 2.1.289 `-p` mode on the
+    # maintainer's machine (~/.local/bin/claude.exe): exit 0, one JSON object
+    # on stdout with result/is_error/num_turns/total_cost_usd/session_id/
+    # terminal_reason. Efforts accepted: low|medium|high|xhigh|max.
+    "claude-code": "claude -p --model {model} --effort {effort} "
+                   "--output-format json --no-session-persistence "
+                   "--max-turns {max_turns} --add-dir {indir} {brief_text}",
 }
+
+# Harness-specific effort renames: the routed effort is valid on the route
+# table but not accepted (or not meaningful) on that harness's CLI. Only the
+# spawned argv sees the mapped value; the card still shows the routed effort.
+_HARNESS_EFFORT_MAP: dict[str, dict[str, str]] = {
+    "claude-code": {"none": "low", "minimal": "low"},
+}
+
+
+def _harness_for(runner: str | None, template: str) -> str:
+    """The harness name recorded on the arm (sidecar, rate line, outcomes).
+
+    A named runner names its harness; a raw template names the binary it
+    invokes (its argv[0] stem). EVALROUTE_HARNESS overrides both — the escape
+    hatch tests use to point a `claude`-shaped fake at a template.
+    """
+    env = os.environ.get("EVALROUTE_HARNESS", "").strip()
+    if env:
+        return env
+    spec = (runner or os.environ.get("EVALROUTE_RUNNER", "")).strip()
+    if spec in _NAMED_RUNNERS:
+        return spec
+    return Path(shlex.split(template, posix=(os.name != "nt"))[0]).stem
  
 _TEMPLATE_VARS = ("{model}", "{effort}", "{provider}", "{brief}", "{indir}",
                   "{brief_text}", "{max_turns}")
@@ -143,9 +173,15 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
     brief_text = brief.read_text(encoding="utf-8", errors="replace")
     for token in shlex.split(template, posix=(os.name != "nt")):
         if token == "{indir}" and not indir:
+            # A dropped value token would leave its flag dangling (a bare
+            # `--add-dir`); drop a preceding `--flag` token too.
+            if argv and argv[-1].startswith("--"):
+                argv.pop()
             continue
         if token == "{max_turns}":
             if max_turns is None:
+                if argv and argv[-1].startswith("--"):
+                    argv.pop()
                 continue
             argv.append(str(max_turns))
             continue
@@ -167,8 +203,9 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
 # ------------------------------------------------------------------- sidecar
 
 _SIDECAR_KEYS = ("route_id", "lane", "model", "effort", "provider", "runner",
-                 "brief", "indir", "started", "ended", "duration_s", "exit",
-                 "session_id", "report", "rate_line", "max_turns")
+                 "harness", "brief", "indir", "started", "ended", "duration_s",
+                 "exit", "session_id", "report", "rate_line", "max_turns",
+                 "harness_turns", "harness_cost_usd", "harness_terminal")
 
 
 def _write_sidecar(brief: Path, run: dict[str, Any]) -> Path:
@@ -457,11 +494,45 @@ def run(args: Any) -> int:
     indir = getattr(args, "indir", None)
     max_turns = _resolve_max_turns(getattr(args, "max_turns", None))
     is_hermes = template == _NAMED_RUNNERS["hermes"]
+    harness = _harness_for(getattr(args, "runner", None), template)
+
+    # --model / --effort overrides: the route table's arm for a lane may not be
+    # runnable on this harness (e.g. z-ai/glm-5.3 on Claude Code). When given,
+    # they replace the routed arm for the spawn and are written everywhere the
+    # actual arm goes (sidecar, rate line) — through `rate --model/--effort`
+    # they land in the outcome as arm_attribution: explicit_user. The card
+    # still shows the routed arm.
+    routed_model, routed_effort = model, effort
+    override_model = getattr(args, "model_override", None)
+    override_effort = getattr(args, "effort_override", None)
+    if override_effort is not None:
+        if override_effort not in tools._VALID_EFFORTS:
+            print(f"evalroute dispatch: invalid --effort {override_effort!r}; "
+                  f"valid: {', '.join(sorted(tools._VALID_EFFORTS))}",
+                  file=sys.stderr)
+            return 2
+    if override_model is not None:
+        model = override_model
+    if override_effort is not None:
+        effort = override_effort
+    if override_model is not None or override_effort is not None:
+        print(f"arm override: {routed_model}@{routed_effort} -> {model}@{effort}",
+              file=sys.stderr)
+    # The harness's CLI may not accept the routed effort verbatim; map it for
+    # the spawn only — the sidecar keeps what the harness actually got.
+    spawn_effort = _HARNESS_EFFORT_MAP.get(harness, {}).get(effort, effort)
+
     if is_hermes:
-        argv = _build_argv(model, effort, provider, brief, indir, max_turns)
+        argv = _build_argv(model, spawn_effort, provider, brief, indir, max_turns)
     else:
-        argv = _build_runner_argv(template, model, effort, provider, brief, indir, max_turns)
-    rate_line = f"rate it:  {tools.cmd_rate(route_id, model, effort, note='...')}"
+        argv = _build_runner_argv(template, model, spawn_effort, provider,
+                                  brief, indir, max_turns)
+    rate_model = model
+    rate_effort = effort
+    rate_harness = "" if harness == "hermes" else f" --harness {harness}"
+    rate_line = (
+        f"rate it:  {tools.cmd_rate(route_id, rate_model, rate_effort, note='...')}"
+        f"{rate_harness}")
     started_ts = time.time()
 
     def _emit(payload: dict[str, Any], lines: list[str]) -> None:
@@ -477,6 +548,7 @@ def run(args: Any) -> int:
             "effort": effort, "provider": provider,
             "runner": getattr(args, "runner", None) or os.environ.get("EVALROUTE_RUNNER")
                       or "hermes",
+            "harness": harness,
             "brief": str(brief), "indir": indir, "started": None, "ended": None,
             "duration_s": None, "exit": None, "session_id": None,
             "report": str(out_path), "rate_line": rate_line,
@@ -504,26 +576,51 @@ def run(args: Any) -> int:
         # stderr); other runners have no contract for it, so session is "-".
         session = _SESSION_ID.search(stderr_text)
         session_id = session.group(1) if session else None
+    harness_turns = harness_cost = harness_terminal = None
+    is_error = False
+    if harness == "claude-code":
+        # Claude Code -p mode: stdout is one JSON object. The `result` string
+        # is the report; the sidecar carries the harness's own bookkeeping.
+        try:
+            payload = json.loads(out_path.read_text(encoding="utf-8",
+                                                    errors="replace"))
+            if isinstance(payload, dict) and "result" in payload:
+                out_path.write_text(str(payload.get("result") or ""),
+                                    encoding="utf-8")
+                session_id = payload.get("session_id") or session_id
+                harness_turns = payload.get("num_turns")
+                harness_cost = payload.get("total_cost_usd")
+                harness_terminal = payload.get("terminal_reason")
+                if payload.get("is_error"):
+                    is_error = True
+        except (OSError, ValueError):
+            pass  # not JSON (or unreadable): the stdout stands as the report
+    if is_error:
+        code = code or 1  # is_error: true counts as a non-zero exit
     sidecar = {
         "route_id": route_id, "lane": lane_id or "auto", "model": model,
         "effort": effort, "provider": provider, "runner":
             getattr(args, "runner", None) or os.environ.get("EVALROUTE_RUNNER")
             or "hermes",
+        "harness": harness,
         "brief": str(brief), "indir": indir,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_ts)),
         "ended": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         "duration_s": round(elapsed, 3), "exit": code, "session_id": session_id,
         "report": str(out_path), "rate_line": rate_line, "max_turns": max_turns,
+        "harness_turns": harness_turns, "harness_cost_usd": harness_cost,
+        "harness_terminal": harness_terminal,
     }
     _write_sidecar(brief, sidecar)
     rate_exit: dict[str, Any] | None = None
     if code != 0 and getattr(args, "rate_on_exit", None) == "fail":
+        harness_flag = rate_harness
         confirmation = fw.handle_rate(
-            f"fail --route-id {route_id} --model {model} --effort {effort} "
-            f"--max-turns {max_turns} --note exit {code}"
+            f"fail --route-id {route_id} --model {rate_model} --effort {rate_effort}"
+            f"{harness_flag} --max-turns {max_turns} --note exit {code}"
             if max_turns is not None else
-            f"fail --route-id {route_id} --model {model} --effort {effort} "
-            f"--note exit {code}")
+            f"fail --route-id {route_id} --model {rate_model} --effort {rate_effort}"
+            f"{harness_flag} --note exit {code}")
         if as_json:
             # C1: with --json, stdout must be exactly one JSON object — the
             # confirmation rides in the envelope instead of trailing it.
@@ -533,7 +630,9 @@ def run(args: Any) -> int:
         else:
             print(confirmation)
     turns = f", {max_turns} turns" if max_turns is not None else ""
-    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}{turns}), "
+    harness_txt = f", {harness}" if harness != "hermes" else ""
+    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} "
+           f"({lane_id or 'auto'}{turns}{harness_txt}), "
            f"exit {code}, {_fmt_dur(elapsed)}",
            f"report: {out_path}   session: {session_id or '-'}",
            rate_line])

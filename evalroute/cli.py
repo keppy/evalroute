@@ -53,6 +53,8 @@ def setup_cli(subparser) -> None:
     rate_p.add_argument("--note", help="Why — the highest-value part of the label")
     rate_p.add_argument("--max-turns", type=int, default=None,
                         help="The agent's per-run tool-turn cap (part of the arm)")
+    rate_p.add_argument("--harness", default=None,
+                        help="The harness the task ran under (default: hermes)")
     rate_p.add_argument("--json", action="store_true",
                         help="Print {\"logged\": ...} JSON instead of the human line")
     install_p = subs.add_parser("install-routes", help="Write the route table's effort "
@@ -91,9 +93,15 @@ def setup_cli(subparser) -> None:
                                  "session store to stderr while it runs")
     dispatch_p.add_argument("--dry-run", action="store_true",
                             help="Route and print the argv; spawn nothing")
-    dispatch_p.add_argument("--runner", help="Named runner (hermes) or a shell-style "
+    dispatch_p.add_argument("--model", dest="model_override", default=None,
+                            help="Override the routed model for the spawn (the "
+                                 "card still shows the routed arm)")
+    dispatch_p.add_argument("--effort", dest="effort_override", default=None,
+                            help="Override the routed effort for the spawn")
+    dispatch_p.add_argument("--runner", help="Named runner (hermes, claude-code) or a shell-style "
                             "template with {model} {effort} {provider} {brief} {indir} "
-                            "{brief_text} placeholders (default: EVALROUTE_RUNNER or hermes)")
+                            "{brief_text} {max_turns} placeholders (default: "
+                            "EVALROUTE_RUNNER or hermes)")
     dispatch_p.add_argument("--json", action="store_true",
                             help="Print the dispatch sidecar object as JSON on stdout "
                                  "(the card still goes to stderr)")
@@ -203,10 +211,15 @@ def evalroute_cli(args) -> int:
             parts.append(f"--model {args.model}")
         if getattr(args, "effort", None):
             parts.append(f"--effort {args.effort}")
-        if getattr(args, "note", None):
-            parts.append(f"--note {args.note}")
         if getattr(args, "max_turns", None) is not None:
             parts.append(f"--max-turns {args.max_turns}")
+        if getattr(args, "harness", None):
+            parts.append(f"--harness {args.harness}")
+        # --note must be LAST: handle_rate's parser takes everything after it as
+        # the note text, so any flag appended later is silently swallowed into
+        # the note (max_turns/harness then record as unknown/hermes).
+        if getattr(args, "note", None):
+            parts.append(f"--note {args.note}")
         message = flywheel.handle_rate(" ".join(parts))
         if as_json:
             data = dict(getattr(flywheel, "_LAST_RATE", {}) or {})

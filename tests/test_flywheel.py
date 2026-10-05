@@ -50,6 +50,25 @@ def test_rate_requires_route(home):
     assert "no route on record" in out
 
 
+def test_rate_records_harness(home):
+    lane, conf, _, method = routing.route_for("write a blog post about our launch")
+    flywheel.note_route("blog post", lane, method, conf)
+    flywheel.handle_rate("pass --harness claude-code --max-turns 30")
+    rec = [json.loads(l) for l in _labels_file(home).read_text().splitlines()][-1]
+    assert rec["kind"] == "outcome"
+    assert rec["harness"] == "claude-code"
+    assert rec["max_turns"] == 30
+
+
+def test_rate_harness_defaults_to_hermes(home):
+    lane, conf, _, method = routing.route_for("write a blog post about our launch")
+    flywheel.note_route("blog post", lane, method, conf)
+    flywheel.handle_rate("pass")
+    rec = [json.loads(l) for l in _labels_file(home).read_text().splitlines()][-1]
+    assert rec["kind"] == "outcome"
+    assert rec["harness"] == "hermes"
+
+
 def test_rate_does_not_attribute_unmatched_turn_to_route(home):
     lane, conf, _, method = routing.route_for("write a blog post about our launch")
     flywheel.note_route("blog post", lane, method, conf)

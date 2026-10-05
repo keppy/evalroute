@@ -172,10 +172,17 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     outcomes = [o for o in outcomes_all if o.get("arm_attribution") == "explicit_user"]
     corrections = [r for r in records if r.get("kind") == "rating_correction"]
 
+    def _arm_label(out: dict[str, Any]) -> str:
+        # The harness is part of the arm; hermes stays the bare model@effort.
+        harness = out.get("harness")
+        suffix = f"@{harness}" if harness and harness != "hermes" else ""
+        return (f"{out.get('actual_model') or '?'}@"
+                f"{out.get('actual_effort') or '?'}{suffix}")
+
     tally: dict[tuple[str, str], dict[str, int]] = {}
     for out in outcomes:
         lane = out.get("route_lane") or "?"
-        arm = f"{out.get('actual_model') or '?'}@{out.get('actual_effort') or '?'}"
+        arm = _arm_label(out)
         cell = tally.setdefault((lane, arm), {"n": 0, "pass": 0, "fail": 0, "skip": 0})
         cell["n"] += 1
         verdict = out.get("rated")
@@ -202,7 +209,7 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         route = route_by_id.get(rid) or {}
         row = {"iso": out.get("iso"), "route_id": rid,
                "lane": out.get("route_lane") or "?",
-               "arm": f"{out.get('actual_model') or '?'}@{out.get('actual_effort') or '?'}",
+               "arm": _arm_label(out),
                "verdict": out.get("rated") or "?",
                "method": route.get("method") or "", "note": out.get("note") or "",
                "age": _age(out.get("consumes")), "corrections": []}

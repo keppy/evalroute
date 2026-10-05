@@ -187,8 +187,8 @@ def test_runner_template_max_turns_placeholder(tmp_path):
     argv2 = dispatch._build_runner_argv(
         "run.sh -m {model} --turns {max_turns} {indir}",
         "m", "medium", "nous", brief, None, None)
-    # token-level drop, like {indir}: the flag token stays
-    assert argv2 == ["run.sh", "-m", "m", "--turns"]
+    # a dropped value token takes its flag with it — no dangling `--turns`
+    assert argv2 == ["run.sh", "-m", "m"]
 
 
 # ------------------------------------------------------------- flywheel
