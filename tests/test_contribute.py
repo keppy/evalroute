@@ -491,9 +491,8 @@ def pd(tmp_path, monkeypatch):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
     import publish_dataset
     root = tmp_path / "repo"
-    (root / "data").mkdir(parents=True)
-    (root / "data" / "routes.yaml").write_text(ROUTES, encoding="utf-8")
-    (root / "plugin.yaml").write_text("version: 9.9.9\n", encoding="utf-8")
+    (root / "evalroute" / "data").mkdir(parents=True)
+    (root / "evalroute" / "data" / "routes.yaml").write_text(ROUTES, encoding="utf-8")
     monkeypatch.setattr(publish_dataset, "REPO_ROOT", root)
     monkeypatch.setattr(publish_dataset, "_plugin_commit", lambda: "0" * 40)
     yield publish_dataset

@@ -176,3 +176,17 @@ def test_now_section_shows_pending_arm_and_age():
     assert "z-ai/glm-5.3-flash @ medium" in html_text
     assert ">3h<" in html_text
     assert "? @ ?" not in html_text
+
+
+def test_demo_ignores_real_state_db(tmp_path, monkeypatch):
+    """--demo must take the sidecar branch even when the home has a real state.db
+    (every Hermes machine does). Before: the demo read the real store, found no
+    matching sessions, and the 'cheapest arm' cell rendered '—'."""
+    import sqlite3
+    from evalroute import report
+    monkeypatch.setenv("EVALROUTE_HOME", str(tmp_path))
+    (tmp_path / "evalroute").mkdir()
+    sqlite3.connect(tmp_path / "state.db").close()  # a real-looking, empty store
+    data = report._data_model(None, None, True)
+    assert data["sessions"].get("source") == "dispatch sidecars"
+    assert data["now"]["cheapest_arm_this_week"].startswith("z-ai/glm-5.3-flash@medium $")

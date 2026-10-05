@@ -218,7 +218,8 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
                      "arm": f"{rec.get('model') or '?'} @ {rec.get('effort') or '?'}",
                      "task": (rec.get("task") or "")[:80], "age": _age(rec.get("ts"))}
                     for rec in pending]
-    return {"routes": len(routes), "outcomes": len(outcomes_all),
+    return {"routes": len(routes), "_routes_raw": routes,
+            "outcomes": len(outcomes_all),
             "pending": pending_rows, "outcome_rows": outcome_rows,
             "tally": tally_rows,
             "methods": [{"method": m, "routes": c} for m, c in sorted(methods.items())]}
@@ -235,7 +236,7 @@ def _now_strip_data(data: dict[str, Any]) -> dict[str, str]:
 
     cheapest = "—"
     sessions = data.get("sessions") or {}
-    iso_now = datetime.now(timezone.utc).isocalendar()
+
     by_arm: dict[str, dict[str, float]] = {}
     for train in (sessions.get("trains") or []):
         for s in (train.get("sessions") or []):
@@ -245,9 +246,10 @@ def _now_strip_data(data: dict[str, Any]) -> dict[str, str]:
                 continue
             started = s.get("started") or ""
             try:
-                st = datetime.strptime(started, "%Y-%m-%d %H:%M").replace(
-                    tzinfo=timezone.utc)
-                if st.isocalendar()[:2] != iso_now[:2]:
+                # `started` is rendered in local time (see _sessions_data); compare
+                # ISO weeks in local time too, or Sunday evening flips the week.
+                st = datetime.strptime(started, "%Y-%m-%d %H:%M")
+                if st.isocalendar()[:2] != datetime.now().isocalendar()[:2]:
                     continue
             except ValueError:
                 pass  # no parseable timestamp: count it anyway
@@ -261,8 +263,14 @@ def _now_strip_data(data: dict[str, Any]) -> dict[str, str]:
         per = cell["cost"] / max(1, cell["passes"])
         cheapest = f"{arm} ${per:.2f}/pass"
 
+    # Routes filed today (local calendar day), not the ledger's whole life.
+    start_of_today = datetime.now().astimezone().replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp()
+    routes_today = sum(1 for r in data.get("_routes_raw", [])
+                       if (r.get("ts") or 0) >= start_of_today)
+
     cells = {
-        "routes_today": str(data.get("routes", 0)),
+        "routes_today": str(routes_today),
         "pending": str(len(data.get("pending") or [])),
         "last_outcome": last_v,
         "cheapest_arm_this_week": cheapest,
@@ -695,8 +703,11 @@ def _data_model(trains: Path | None, factory_json: str | None,
                     sidecar_meta[str(run["session_id"])] = {
                         "model": str(run.get("model") or ""),
                         "effort": str(run.get("effort") or "")}
+    # Demo never reads the real session store: pass a path that cannot exist so
+    # the sidecar branch is taken on machines that do have a state.db.
     sessions = _sessions_data(
-        hermes_home() / "state.db",
+        (Path(demo.demo_trains_dir()) / "no-state.db") if is_demo
+        else hermes_home() / "state.db",
         {t["name"]: {b["session_id"] for b in t["briefs"]
                      if b["session_id"]}
          for t in trains_data["trains"]},
@@ -719,6 +730,7 @@ def _data_model(trains: Path | None, factory_json: str | None,
         "trains": trains_data,
         "drift": drift,
         "now": _now_strip_data({"routes": ledger["routes"],
+                                "_routes_raw": ledger["_routes_raw"],
                                 "pending": ledger["pending"],
                                 "outcome_rows": ledger["outcome_rows"],
                                 "sessions": sessions}),

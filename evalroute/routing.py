@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -435,8 +436,13 @@ def _table_line() -> str:
 
 def route_card(lane: dict[str, Any], conf: float, hits: list[str],
                pinned: bool = False, method: str = "rules",
-               facets: list[str] | None = None, route_id: str | None = None) -> str:
-    """Render the human-readable route card."""
+               facets: list[str] | None = None, route_id: str | None = None,
+               wide: bool = False) -> str:
+    """Render the human-readable route card.
+
+    On the CLI surfaces (not hermes-chat), long lines wrap at 100 columns
+    unless `wide` asks for the one-line-per-field card for log scrapers.
+    """
     lines = [
         f"lane: {lane['label']} ({lane['id']})",
         f"route: {lane['model']} @ {lane['effort']}"
@@ -468,14 +474,61 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
         lines.append(f"note: {lane['notes']}")
     lines.append(f"why here: {lane.get('match_hint', '')}")
     if route_id:
-        lines.append(f"route id: {route_id} (use {cmd_rate(route_id=route_id, model=lane['model'], effort=_effort_for_override(lane), note='')} if routes overlap)")
+        rate_cmd = cmd_rate(route_id=route_id, model=lane['model'],
+                            effort=_effort_for_override(lane), note='')
+        if _wrap_on() and not wide:
+            lines.append(f"route id: {route_id}")
+            # Break the rate command at the flag boundary ourselves so a flag never
+            # lands on a different line from its value.
+            head, sep, tail = rate_cmd.partition(" --model ")
+            if sep and len(f"rate:     {rate_cmd}") > 100:
+                lines.append(f"rate:     {head}")
+                lines.append(f"          --model {tail}")
+            else:
+                lines.append(f"rate:     {rate_cmd}")
+        else:
+            lines.append(f"route id: {route_id} (use {rate_cmd} if routes overlap)")
     # Workflow footer: the card answers "what arm?", the footer answers
     # "what now?". Wrong lane -> fix it now (a --lane reroute re-logs the
     # assignment; /rate attributes to the LAST route on file).
-    lines.append(f"next: {cmd_switch_arm(lane['model'], _effort_for_override(lane))}"
-                 f" | wrong lane? {cmd_route_lane()}"
-                 f" | when done: {cmd_rate(model=lane['model'], effort=_effort_for_override(lane))}")
-    return "\n".join(lines)
+    next_cmd = cmd_switch_arm(lane['model'], _effort_for_override(lane))
+    wrong = f"wrong lane? {cmd_route_lane()}"
+    done = f"when done: {cmd_rate(model=lane['model'], effort=_effort_for_override(lane), note=('' if _wrap_on() else 'why'))}"
+    if _wrap_on() and not wide:
+        lines.append(f"next:     {next_cmd.strip('()')}")
+        indent = " " * len("next:     ")
+        lines.append(f"{indent}{wrong}")
+        lines.append(f"{indent}{done}")
+    else:
+        lines.append(f"next: {next_cmd} | {wrong} | {done}")
+    return _maybe_wrap("\n".join(lines), wrap=not wide)
+
+
+def _wrap_on() -> bool:
+    """Wrapping applies only to the CLI surfaces; chat cards are pinned."""
+    return SURFACE != "hermes-chat"
+
+
+def _maybe_wrap(card: str, wrap: bool = True) -> str:
+    """Wrap any line over 100 columns (CLI surfaces only).
+
+    7-space hanging indent, no mid-token breaks: `$0.0001/succ` and model
+    ids never split. `basis:`/`note:` are the fields that need it; the
+    route-id/next lines are built wrapped above.
+    """
+    if not _wrap_on() or not wrap:
+        return card
+    out = []
+    for line in card.splitlines():
+        if len(line) <= 100:
+            out.append(line)
+            continue
+        head, _, rest = line.partition(": ")
+        out.extend(textwrap.wrap(
+            f"{head}:{' ' * (6 - len(head))}{rest}", width=100,
+            initial_indent="", subsequent_indent=" " * 7,
+            break_long_words=False, break_on_hyphens=False) or [line])
+    return "\n".join(out)
 
 
 def _effort_auto(lane: dict[str, Any]) -> bool:
@@ -563,7 +616,7 @@ def evalroute_route(args: dict[str, Any], **_) -> str:
 
 # ---------------------------------------------------------------- slash + CLI
 
-def _route_for_args(raw_args: str) -> tuple[str, dict[str, Any], float, bool, str, str | None]:
+def _route_for_args(raw_args: str, wide: bool = False) -> tuple[str, dict[str, Any], float, bool, str, str | None]:
     """Shared body for /route and `hermes evalroute route`.
 
     Returns (card, lane, confidence, pinned, method, route_id) so the CLI
@@ -585,14 +638,15 @@ def _route_for_args(raw_args: str) -> tuple[str, dict[str, Any], float, bool, st
     lane = _lane_by_id(lane_id) if lane_id else None
     if lane is not None:
         route_id = _note_route(task, lane, "pinned", 1.0, replace_route_id=replace_id)
-        return route_card(lane, 1.0, [], pinned=True, route_id=route_id), \
+        return route_card(lane, 1.0, [], pinned=True, route_id=route_id, wide=wide), \
             lane, 1.0, True, "pinned", route_id
     if lane_id:
         known = ", ".join(l["id"] for l in _load_routes())
         raise ValueError(f"unknown lane {lane_id!r}; known lanes: {known}")
     lane_obj, conf, hits, method, facets = route_full(task)
     route_id = _note_route(task, lane_obj, method, conf, facets=facets)
-    return route_card(lane_obj, conf, hits, method=method, facets=facets, route_id=route_id), \
+    return route_card(lane_obj, conf, hits, method=method, facets=facets,
+                      route_id=route_id, wide=wide), \
         lane_obj, conf, False, method, route_id
 
 

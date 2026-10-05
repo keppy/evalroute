@@ -36,6 +36,8 @@ def setup_cli(subparser) -> None:
     route_p.add_argument("task", nargs="*", help="The task description")
     route_p.add_argument("--lane", help="Pin a lane id instead of classifying")
     route_p.add_argument("--replace-route-id", help="Replace a specific pending route (requires --lane)")
+    route_p.add_argument("--wide", action="store_true",
+                         help="Single-line card for log scrapers (default: wraps at 100 columns)")
     route_p.add_argument("--json", action="store_true",
                          help="Print the tool-result JSON envelope instead of the card")
     rate_p = subs.add_parser("rate", help="Rate the last routed task: pass|fail",
@@ -190,7 +192,8 @@ def evalroute_cli(args) -> int:
                 raw = f"--lane {lane} {f'--replace-route-id {replace_id}' if replace_id else ''} {task}".strip()
             else:
                 raw = task
-            card, lane_obj, conf, pinned, method, route_id = _route_for_args(raw)
+            card, lane_obj, conf, pinned, method, route_id = _route_for_args(
+                raw, wide=bool(getattr(args, "wide", False)))
         except Exception as exc:
             print(f"evalroute: {exc}")
             return 1
