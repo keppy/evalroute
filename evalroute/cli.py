@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from . import dataset, dispatch, flywheel, report, routing
 from .routing import _lib_version, _route_for_args, _tool_result, install_routes, set_surface
@@ -140,6 +141,13 @@ def setup_cli(subparser) -> None:
                           help="Exit 3 when any lane is below --min-per-lane")
     export_p.add_argument("--json", action="store_true",
                           help="Print the summary as one JSON object")
+    enc_p = subs.add_parser("install-encoder",
+                            help="Install a CONTRACT §4 encoder artifact "
+                                 "(HF save_pretrained dir) as the classification "
+                                 "fallback; --remove to uninstall")
+    enc_p.add_argument("dir", nargs="?", help="Artifact directory to copy from")
+    enc_p.add_argument("--remove", action="store_true", help="Delete the installed artifact")
+    enc_p.add_argument("--json", action="store_true", help="Print the result as one JSON object")
     subparser.set_defaults(func=evalroute_cli)
 
 
@@ -175,6 +183,10 @@ def evalroute_cli(args) -> int:
             min_per_lane=int(getattr(args, "min_per_lane", 20)),
             strict=bool(getattr(args, "strict", False)),
             as_json=bool(getattr(args, "json", False)))
+    if action == "install-encoder":
+        return install_encoder(dir_arg=getattr(args, "dir", None),
+                               remove=bool(getattr(args, "remove", False)),
+                               as_json=bool(getattr(args, "json", False)))
     if action == "rate":
         as_json = bool(getattr(args, "json", False))
         parts = [getattr(args, "verdict", None) or ""]
@@ -232,6 +244,56 @@ def evalroute_cli(args) -> int:
         return 0
     print(_WORKFLOW_EPILOG)
     return 2
+
+
+def install_encoder(dir_arg: str | None, remove: bool = False,
+                    as_json: bool = False) -> int:
+    """Validate and copy a CONTRACT §4 encoder artifact into <home>/evalroute/encoder/."""
+    import shutil
+
+    from .classify_encoder import encoder_dir, is_installed
+
+    d = encoder_dir()
+    if remove:
+        if d.exists():
+            shutil.rmtree(d)
+        msg = {"installed": False, "removed": True, "encoder_dir": str(d)}
+        print(json.dumps(msg) if as_json else f"encoder removed ({d})")
+        return 0
+    src = Path(dir_arg) if dir_arg else None
+    if src is None or not src.is_dir():
+        print("evalroute: install-encoder needs an artifact directory")
+        return 2
+    required = ("config.json", "label2id.json", "temperature.json", "metrics.json")
+    missing = [f for f in required if not (src / f).is_file()]
+    if missing or not any(src.glob("*.safetensors")) and not any(src.glob("*.bin")):
+        print(f"evalroute: artifact incomplete; missing: {', '.join(missing) or 'model weights'}")
+        return 2
+    if d.exists():
+        shutil.rmtree(d)
+    shutil.copytree(src, d)
+    metrics = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    label2id = json.loads((d / "label2id.json").read_text(encoding="utf-8"))
+    known = {lane["id"] for lane in routing._load_routes()}
+    unknown = sorted(lab for lab in label2id if lab not in known)
+    msg = {
+        "installed": True,
+        "encoder_dir": str(d),
+        "contract_version": metrics.get("contract_version"),
+        "calib_accuracy": metrics.get("calib_accuracy"),
+        "num_labels": metrics.get("num_labels"),
+        "unknown_labels": unknown,
+    }
+    if as_json:
+        print(json.dumps(msg))
+    else:
+        print(f"encoder installed: {d}")
+        print(f"contract_version: {metrics.get('contract_version')}  "
+              f"calib_accuracy: {metrics.get('calib_accuracy')}  "
+              f"num_labels: {metrics.get('num_labels')}")
+        if unknown:
+            print(f"warning: labels that are not lane ids: {', '.join(unknown)}")
+    return 0
 
 
 def main() -> int:

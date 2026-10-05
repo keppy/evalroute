@@ -90,3 +90,10 @@ def test_json_envelope_only_card_differs():
     assert {k: v for k, v in wide.items() if k != "card"} == \
         {k: v for k, v in narrow.items() if k != "card"}
     assert wide["card"] != narrow["card"]
+
+
+def test_wrapped_long_head_keeps_space():
+    """A field name longer than 6 chars must not be glued to its body when wrapped
+    ('classification:no keyword hit' was visible in the real CLI output)."""
+    wrapped = routing._maybe_wrap("classification: " + "x " * 60)
+    assert wrapped.startswith("classification: x")

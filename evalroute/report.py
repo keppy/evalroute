@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from . import demo, flywheel, routing
+from . import classify_encoder
 from .dispatch import _latest_run
 from .paths import hermes_home
 
@@ -720,6 +721,9 @@ def _data_model(trains: Path | None, factory_json: str | None,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "evalroute_version": routing._lib_version(),
         "table": routing._table_line(),
+        "classifier": ("rules+encoder@%.2f" % float(
+            (classify_encoder.load() or {}).get("metrics", {}).get("calib_accuracy", 0.0))
+            if classify_encoder.is_installed() else "rules+llm"),
         "ledger_path": ("demo fixture (evalroute/data/demo/labels.jsonl) "
                         if is_demo else str(flywheel.labels_path())),
         "demo": is_demo,
