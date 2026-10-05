@@ -211,12 +211,15 @@ def evalroute_cli(args) -> int:
             parts.append(f"--model {args.model}")
         if getattr(args, "effort", None):
             parts.append(f"--effort {args.effort}")
-        if getattr(args, "note", None):
-            parts.append(f"--note {args.note}")
         if getattr(args, "max_turns", None) is not None:
             parts.append(f"--max-turns {args.max_turns}")
         if getattr(args, "harness", None):
             parts.append(f"--harness {args.harness}")
+        # --note must be LAST: handle_rate's parser takes everything after it as
+        # the note text, so any flag appended later is silently swallowed into
+        # the note (max_turns/harness then record as unknown/hermes).
+        if getattr(args, "note", None):
+            parts.append(f"--note {args.note}")
         message = flywheel.handle_rate(" ".join(parts))
         if as_json:
             data = dict(getattr(flywheel, "_LAST_RATE", {}) or {})
