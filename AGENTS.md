@@ -72,7 +72,9 @@ sha, validated before activation; routing works offline on the bundled table wit
 it. Needs `pip install "evalroute[hub]"`.
 
 Sharing outcomes: `evalroute contribute --dry-run` prints the exact whitelist-redacted
-outcome rows that would go (task text, notes, paths and the salt never leave);
+outcome rows and lane-correction rows (`from_lane`/`to_lane`, no text) that would go
+(task text, notes, paths and the salt never leave; `max_turns` ships because it is part of
+the arm);
 `evalroute contribute` uploads them — after you have read the dry-run — to
 `contributed/<your-hf-username>/` in `keppy/evalroute-flywheel` with your own
 `huggingface_hub` login, but only with the gate on: `evalroute.contribute: true` in

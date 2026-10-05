@@ -431,7 +431,13 @@ What leaves your machine — and only this, whitelist-redacted:
 | `facets` | counts only, e.g. `{"long-doc": 1}` |
 | `week` | ISO year-week (`2026-W40`) — no timestamps |
 | `task_hash` | HMAC-SHA256 of the task text under a per-install salt |
-| `corrected`, `schema` | correction flag; schema version |
+| `corrected`, `schema` | correction flag; schema version (2) |
+| `max_turns` | the agent's per-run tool-turn cap the arm ran under (Hermes `agent.max_turns`), or null — part of the arm: the same model and effort at 150 turns and at 300 are different arms |
+
+Lane corrections ship too, as lane pairs only: when you rerouted with `--lane` or
+rated with `--lane`, a row `{"kind": "lane_correction", "from_lane", "to_lane",
+"method", "week", "schema"}` says the classifier picked A and you said B. That is
+a fact about the lane descriptions that pools across installs without any text.
 
 What never leaves: task text, notes, paths, hostnames, session keys,
 emails, the salt itself, the HF token (evalroute never reads it —

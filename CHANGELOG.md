@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.1] - 2026-10-05
+
+Direction correction after train F's learning curve, and flywheel schema 2.
+
+- **Train your own encoder is the default path** (README, AGENTS.md): `export-cases` →
+  thomas recipe → `install-encoder my-encoder`, 30 s on CPU. The shared encoder is a
+  day-one floor trained on public rows only — now sourced from the reviewed corpus
+  `keppy/evalroute-tasks`, not from paraphrases.
+- `scripts/augment_cases.py`: `--max-ratio` (default 1.0) caps paraphrases at the lane's
+  real-row count; lanes with zero real rows still get scaffolding. The docstring says when
+  not to run it. The learning curve showed paraphrases that outnumber real rows pull the
+  model toward the paraphrase dialect (routine-coding 92% → 33–67%).
+- **`contribute` schema 2:** lane corrections ship as lane pairs
+  (`from_lane`/`to_lane`/`method`/`week`, never text); outcome rows carry `max_turns`.
+- **`max_turns` is part of the arm.** `dispatch` resolves it (`--max-turns` > Hermes
+  `agent.max_turns` in `config.yaml` > none), passes `--max-turns` to `hermes chat`, prints it
+  on the dispatched line, records it in the sidecar and the outcome row; `rate --max-turns`
+  for hand-run arms. Custom runner templates get a `{max_turns}` placeholder.
+- `report`: "real labeled rows per lane" table (pinned routes with ≥ 12 chars, distinct text)
+  with corrections per lane and a `pin 8 real tasks here` nudge for thin lanes; `labels` in
+  `--json`.
+
 ## [0.9.0] - 2026-10-04
 
 ### Added
