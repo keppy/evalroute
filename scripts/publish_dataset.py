@@ -38,8 +38,11 @@ DEFAULT_REPO_ID = "keppy/evalroute-flywheel"
 
 
 def _plugin_version() -> str:
-    manifest = yaml.safe_load((REPO_ROOT / "plugin.yaml").read_text(encoding="utf-8")) or {}
-    return str(manifest.get("version", "?"))
+    try:
+        from importlib.metadata import version
+        return version("evalroute")
+    except Exception:
+        return "?"
 
 
 def _plugin_commit() -> str:
@@ -66,7 +69,8 @@ def build_staging(staging: Path, contributed_dir: Path | None = None) -> dict:
     for name in ROOT_MODEL_FILES:
         _copy(ARTIFACTS / name, staging / "measured" / "models" / name)
     (staging / "routes").mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(REPO_ROOT / "data" / "routes.yaml", staging / "routes" / "routes.yaml")
+    shutil.copyfile(REPO_ROOT / "evalroute" / "data" / "routes.yaml",
+                    staging / "routes" / "routes.yaml")
 
     # contributed/: opt-in, redacted outcome rows, curated by hand into
     # contributed/<contributor>/<ts>.jsonl in the repo (or --contributed DIR).
@@ -96,6 +100,7 @@ def build_staging(staging: Path, contributed_dir: Path | None = None) -> dict:
 
 
 def _dataset_card(contributed: bool = False) -> str:
+    """The dataset card: tells the README's story, in the README's order."""
     front = f"""\
 ---
 license: mit
@@ -118,29 +123,51 @@ configs:
     path: contributed/*/*.jsonl
 ''' if contributed else ''}---
 """
-    return front + f"""\
+    body = f"""\
 # evalroute flywheel
 
-Evidence behind the [hermes-plugin-evalroute](https://github.com/keppy/hermes-plugin-evalroute)
-route table.
+Honest size: three lanes are **measured** (n=10 each; arms tied at p=1.0) and
+six are **priors** from public benchmarks — not our runs. The pipe is real,
+the table is small, your outcomes grow it.
 
-- **measured** — Tier-A harness artifacts exactly as measured: per-lane
-  `runs.jsonl` (full model responses), `report.csv`, `tasks.jsonl`, plus the
-  models manifests under `measured/models/`. Written only by harness runs;
-  never accepts contributed rows.
-- **routes** — the generated `routes.yaml`, produced by `routes_from_report.py`
-  from `measured` at the plugin commit named in `routes/MANIFEST.json`
-  (`plugin_commit`; `routes_sha256` pins the table bytes).
-{f'''- **contributed** — redacted outcome rows from opted-in installs, one JSONL
-  file per upload under `contributed/<contributor>/`. Whitelist-redacted by
-  `evalroute contribute --dry-run` (lane, arms, verdict, week, HMAC task
-  hash — never task text, notes, or paths); by construction it can never
-  become `measured` — observational data can contest a priors lane, never
-  overwrite a measured one.
-''' if contributed else ''}
-Provenance labels used by the route table: `measured` (harness run, coverage
-and $/success), `observed` (single-arm ledger stats, weaker by construction),
-`priors` (no data, human estimate)."""
+Configs: **measured** — Tier-A harness artifacts (`runs.jsonl`, `report.csv`,
+`tasks.jsonl`, models manifests); written only by harness runs, never accepts
+contributed rows · **routes** — the `routes.yaml` that `evalroute sync` pins
+(`MANIFEST.json` says what produced it) · **contributed** — redacted outcome
+rows from opted-in installs under `contributed/<contributor>/`{'' if contributed else ' (empty in this revision)'}.
+
+## What a contributed row carries — only this, whitelist-redacted
+
+| key | what it is |
+| --- | --- |
+| `kind` | always `outcome` |
+| `route_lane`, `route_model`, `route_effort` | the routed arm |
+| `actual_model`, `actual_effort`, `arm_attribution` | the arm you actually ran (only when you confirmed it) |
+| `method`, `confidence` | how the route was classified |
+| `rated` | pass / fail / skip (rating corrections applied) |
+| `facets` | counts only, e.g. `{{"long-doc": 1}}` |
+| `week` | ISO year-week (`2026-W40`) — no timestamps |
+| `task_hash` | HMAC-SHA256 of the task text under a per-install salt |
+| `corrected`, `schema` | correction flag; schema version |
+
+Never leaves: task text, notes, paths, hostnames, session keys, the salt, the token.
+
+```bash
+uv tool install evalroute                    # or: pip install evalroute
+evalroute route --json "<one-line task>"     # -> lane, model, effort, route_id
+# ... run the task on that arm, your own way ...
+evalroute rate pass --route-id <id> --model <model> --effort <effort> --note "why" --json
+evalroute report --json                      # what the ledger says so far
+evalroute contribute --dry-run               # the exact rows that would go; grep, then drop the flag
+```
+
+Pooled rows are **observational**: they can contest a `priors` lane, never
+overwrite a `measured` one.
+
+- code + contract: https://github.com/keppy/evalroute (see its `AGENTS.md`)
+- Hermes plugin: https://github.com/keppy/hermes-plugin-evalroute
+"""
+    return front + body
 
 
 def _print_tree(staging: Path) -> None:

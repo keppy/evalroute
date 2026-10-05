@@ -67,7 +67,7 @@ def test_cli_surface_card_has_no_slash_or_hermes(home):
     assert "/model" not in card and "/rate" not in card and "/route" not in card
     assert "hermes" not in card
     assert "evalroute rate pass|fail --route-id abc123 --model" in card
-    assert f"next: (run on {lane['model']} @ {routing._effort_for_override(lane)})" in card
+    assert f"next:     run on {lane['model']} @ {routing._effort_for_override(lane)}" in card
     assert 'wrong lane? evalroute route --lane <id> "<same task>"' in card
 
 

@@ -86,6 +86,10 @@ actually ran are ever pooled, and pooled rows can never overwrite a `measured` r
 - `route`, `rate`, `sync`, `dispatch`, `report` and `contribute` speak `--json`; parse that,
   never the card. (`install-routes` is Hermes-only and has no JSON mode.) `evalroute
   --version` prints the resolved library version.
+- The CLI card wraps at 100 columns; `route --wide` restores one line per field for log
+  scrapers. `report --demo` renders a bundled synthetic ledger (never reads or writes yours)
+  — use it to see what the report looks like before you have data; `--theme light` for
+  paper-coloured output.
 - `<brief>.report.md` and `<brief>.dispatch.json` are train provenance, like the brief
   itself: commit them beside the brief. They hold ids, paths, exit codes and the worker's
   report — never the ledger's task text. Do not add them to `.gitignore`.

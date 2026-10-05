@@ -195,8 +195,8 @@ def test_report_tally_numbers(world):
     # routine-coding: flash@medium n=1 pass=1; glm@high n=1 fail=1
     # dl-ml: glm@high n=1 pass=1; flash@medium n=1 skip=1
     tally_rows = re.findall(
-        r"<tr data-lane='([^']+)' data-arm='([^']+)'>" 
-        r"<td>[^<]*</td><td[^>]*>[^<]*</td><td>[^<]*</td>"
+        r"<tr data-lane='([^']+)' data-arm='([^']+)'>"
+        r"<td>.*?</td><td>.*?</td><td[^>]*>.*?</td>"
         r"<td>(\d+)</td><td[^>]*>(\d+)</td><td[^>]*>(\d+)</td><td[^>]*>(\d+)</td>",
         html_text)
     got = {(lane, arm): tuple(int(x) for x in rest)
