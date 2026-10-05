@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import flywheel
+from .routes_from_report import LANE_ALIASES
 from .routing import _load_routes
 
 SOURCES = ("ledger", "correction", "taskset", "seed")
@@ -43,8 +44,11 @@ def _load_tasksets(spec: str) -> list[dict[str, str]]:
                 continue
             rec = json.loads(line)
             if rec.get("lane") and rec.get("prompt"):
+                # Taskset lane strings are harness spellings ("routine coding");
+                # the label must be the routes.yaml id. One spelling authority.
+                lane = LANE_ALIASES.get(rec["lane"], rec["lane"])
                 rows.append({"id": "taskset:" + rec["id"],
-                             "text": rec["prompt"], "label": rec["lane"]})
+                             "text": rec["prompt"], "label": lane})
     return rows
 
 

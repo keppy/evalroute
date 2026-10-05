@@ -248,3 +248,14 @@ def test_cli_end_to_end(home, tmp_path):
     assert stats["total"] >= 1
     rows = _read(out)
     assert rows and rows[0]["id"] == "a" * 32
+
+
+def test_taskset_lane_spelling_normalised(tmp_path):
+    """Harness tasksets spell lanes 'routine coding'; labels must be routes.yaml ids,
+    or the encoder learns a tenth lane that no route can ever match."""
+    from evalroute import export_cases
+    d = tmp_path / "tier-a-x"; d.mkdir()
+    (d / "tasks.jsonl").write_text(
+        '{"id": "t1", "lane": "routine coding", "prompt": "add a flag"}\n', encoding="utf-8")
+    rows = export_cases._load_tasksets(str(tmp_path))
+    assert [r["label"] for r in rows] == ["routine-coding"]
