@@ -62,7 +62,7 @@ class TestWithArtifact:
         from evalroute import routing
         lane, conf, hits, method, facets = routing.route_full("write something")
         card = routing.route_card(lane, conf, hits, method="encoder", facets=facets)
-        assert "classification: encoder 0.90 calib · conf" in card
+        assert "classification: encoder (opt-in) 0.90 calib · conf" in card
 
     def test_threshold_defer_to_llm(self, tiny_encoder, tmp_path, monkeypatch):
         home = _install(tiny_encoder, monkeypatch, tmp_path)
@@ -159,3 +159,12 @@ class TestInstallEncoder:
         assert out["calib_accuracy"] == 0.9
         assert out["num_labels"] == 3
         assert out["unknown_labels"] == []
+
+
+def test_hf_id_detection():
+    from evalroute.cli import _looks_like_hf_id
+    assert _looks_like_hf_id("keppy/evalroute-lane-encoder")
+    assert not _looks_like_hf_id("C:/Users/x/enc")
+    assert not _looks_like_hf_id("./enc")
+    assert not _looks_like_hf_id("a/b/c")
+    assert not _looks_like_hf_id(None)

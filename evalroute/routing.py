@@ -465,9 +465,12 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
     if pinned:
         lines.append("classification: lane pinned by caller")
     elif method == "encoder":
-        m = classify_encoder.load()
-        calib = float((m or {}).get("metrics", {}).get("calib_accuracy", 0.0))
-        lines.append(f"classification: encoder {calib:.2f} calib · conf {conf:.2f}")
+        m = (classify_encoder.load() or {}).get("metrics", {})
+        if m.get("eval_n"):
+            basis = f"{float(m['eval_accuracy']):.2f} on {int(m['eval_n'])} real held-out tasks"
+        else:
+            basis = f"{float(m.get('calib_accuracy', 0.0)):.2f} calib"
+        lines.append(f"classification: encoder (opt-in) {basis} · conf {conf:.2f}")
     else:
         # An installed encoder that did not decide this route abstained (below
         # threshold or unknown label); say so on whichever fallback line follows.

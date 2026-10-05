@@ -246,6 +246,14 @@ def evalroute_cli(args) -> int:
     return 2
 
 
+def _looks_like_hf_id(s: str | None) -> bool:
+    """`owner/name` with no path separators beyond the one slash and no drive letter."""
+    if not s or "\\" in s or s.count("/") != 1 or s.startswith((".", "/")) or ":" in s:
+        return False
+    owner, name = s.split("/")
+    return bool(owner) and bool(name) and not Path(s).exists()
+
+
 def install_encoder(dir_arg: str | None, remove: bool = False,
                     as_json: bool = False) -> int:
     """Validate and copy a CONTRACT §4 encoder artifact into <home>/evalroute/encoder/."""
@@ -261,8 +269,18 @@ def install_encoder(dir_arg: str | None, remove: bool = False,
         print(json.dumps(msg) if as_json else f"encoder removed ({d})")
         return 0
     src = Path(dir_arg) if dir_arg else None
+    if src is not None and not src.is_dir() and _looks_like_hf_id(dir_arg):
+        # `owner/name` → pull the model repo (needs the [hub] extra).
+        try:
+            import huggingface_hub
+        except ImportError:
+            print("evalroute: install-encoder from a Hub id needs the huggingface_hub package: "
+                  "pip install 'evalroute[hub]'")
+            return 2
+        allow = ["*.json", "*.safetensors", "*.txt", "*.model"]
+        src = Path(huggingface_hub.snapshot_download(dir_arg, repo_type="model", allow_patterns=allow))
     if src is None or not src.is_dir():
-        print("evalroute: install-encoder needs an artifact directory")
+        print("evalroute: install-encoder needs an artifact directory or a Hub id (owner/name)")
         return 2
     required = ("config.json", "label2id.json", "temperature.json", "metrics.json")
     missing = [f for f in required if not (src / f).is_file()]
