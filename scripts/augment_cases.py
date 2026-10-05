@@ -4,6 +4,20 @@ Reads an `export-cases` JSONL file ({"id","text","label"} rows), and for each
 lane writes synthetic task requests to bring the lane up to --per-lane rows.
 Augmentation is training-only: eval must stay real rows (see split_cases).
 
+WHEN TO USE THIS — read before running (train 2026-10-F learning curve):
+  Paraphrases are scaffolding for a lane that has NO real rows yet. They are
+  not training data. On the same 19 real held-out tasks, 191 paraphrases cost
+  routine-coding 92% -> 33-67% (the model learns what a lane sounds like when
+  a model describes it; real tasks don't sound like that), while 14 real rows
+  moved a lane 0 -> 67%. Real rows are worth ~10x a paraphrase. So:
+    - never let paraphrases outnumber real rows in a lane that has any
+      (--max-ratio, default 1.0, enforces this; raise it knowingly);
+    - the right fix for a thin lane is 8-10 real `route --lane <id>` rows
+      from work you actually do, then delete that lane's aug rows;
+    - use a non-reasoning model (qwen3-coder-flash, gemini-flash-lite):
+      "write ten lines" needs no chain of thought, and reasoning endpoints
+      burn the token budget before the first line.
+
 The standalone library has no LLM client, so this script owns a minimal one:
 OpenAI-compatible chat completions via urllib only. Endpoint and key come
 from EVALROUTE_LLM_BASE_URL / EVALROUTE_LLM_API_KEY (any OpenAI-compatible
@@ -12,8 +26,9 @@ Ledger text is private — prompts carry lane metadata and taskset rows only,
 never ledger route rows.
 
 Usage:
-  python scripts/augment_cases.py --in cases.jsonl --out cases.aug.jsonl \
-      --per-lane 30 [--model z-ai/glm-5.3-flash] [--dry-run | --yes] [--seed 7]
+  python scripts/augment_cases.py --in cases.jsonl --out cases.aug.jsonl \\
+      --per-lane 10 [--max-ratio 1.0] [--model qwen/qwen3-coder-flash] \\
+      [--dry-run | --yes] [--seed 7]
 """
 
 from __future__ import annotations
@@ -38,7 +53,7 @@ def _endpoint() -> tuple[str, str | None]:
     base = os.environ.get("EVALROUTE_LLM_BASE_URL") or DEFAULT_BASE_URL
     key = os.environ.get("EVALROUTE_LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
     return base.rstrip("/") + "/chat/completions", key
-DEFAULT_MODEL = "z-ai/glm-5.3-flash"
+DEFAULT_MODEL = "qwen/qwen3-coder-flash"  # non-reasoning; see module docstring
 PER_CALL = 10
 
 
@@ -138,18 +153,24 @@ def _count_aug(rows: list[dict], lane_id: str) -> int:
                if r.get("label") == lane_id and str(r.get("id", "")).startswith("aug:"))
 
 
-def build_plan(rows: list[dict], per_lane: int) -> list[dict]:
+def build_plan(rows: list[dict], per_lane: int, max_ratio: float = 1.0) -> list[dict]:
     """Per-lane plan entries sorted by lane order in the table.
 
     Resumable: aug rows already in the input count toward the target, so
     re-running on a partial output only fills the gaps.
+
+    max_ratio caps total paraphrases at max_ratio × real rows for any lane
+    that has real rows (train F: paraphrases that outnumber real rows pull the
+    model toward the paraphrase dialect). Lanes with zero real rows get the
+    full per_lane as scaffolding.
     """
     lanes = _load_routes()
     plan = []
     for lane in lanes:
         real = _count_real(rows, lane["id"])
         have_aug = _count_aug(rows, lane["id"])
-        target = per_lane - real - have_aug
+        allowed = per_lane if real == 0 else min(per_lane, int(max_ratio * real))
+        target = allowed - have_aug
         plan.append({"lane": lane, "real": real, "have_aug": have_aug, "target": target,
                      "calls": max(0, math.ceil(target / PER_CALL)) if target > 0 else 0})
     return plan
@@ -173,8 +194,9 @@ def _print_table(plan: list[dict], short: dict[str, int] | None = None) -> None:
 
 
 def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
-        seed: int, dry_run: bool, prompt_lane: str | None = None) -> int:
-    plan = build_plan(rows, per_lane)
+        seed: int, dry_run: bool, prompt_lane: str | None = None,
+        max_ratio: float = 1.0) -> int:
+    plan = build_plan(rows, per_lane, max_ratio)
     lanes = _load_routes()
     rng = random.Random(seed)
     if dry_run:
@@ -258,7 +280,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--in", dest="infile", required=True)
     ap.add_argument("--out", dest="outfile", required=True)
-    ap.add_argument("--per-lane", type=int, required=True)
+    ap.add_argument("--per-lane", type=int, required=True,
+                    help="aug rows for a lane with NO real rows (scaffolding)")
+    ap.add_argument("--max-ratio", type=float, default=1.0,
+                    help="cap aug at this multiple of real rows for lanes that have any "
+                         "(default 1.0; train F: paraphrases outnumbering real rows hurt)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--seed", type=int, default=7)
     mode = ap.add_mutually_exclusive_group()
@@ -271,11 +297,11 @@ def main(argv: list[str] | None = None) -> int:
     rows = [json.loads(l) for l in Path(args.infile).read_text(encoding="utf-8").splitlines()
             if l.strip()]
     if not args.dry_run and not args.yes:
-        plan = build_plan(rows, args.per_lane)
+        plan = build_plan(rows, args.per_lane, args.max_ratio)
         _print_table(plan)
         return 2
     return run(rows, Path(args.outfile), args.per_lane, args.model, args.seed,
-               args.dry_run, prompt_lane=args.prompt_lane)
+               args.dry_run, prompt_lane=args.prompt_lane, max_ratio=args.max_ratio)
 
 
 if __name__ == "__main__":

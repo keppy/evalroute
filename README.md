@@ -239,13 +239,27 @@ math hit; the rules now guard negated keywords). So routing is layered:
    outright, no model call.
 2. **Encoder** (opt-in) — if you have installed one, a small local classifier
    answers when the rules are weak, at $0 and offline, abstaining below its
-   calibrated threshold. `evalroute install-encoder keppy/evalroute-lane-encoder`
-   installs the shared v1 (`pip install "evalroute[encoder]"` first). On 19 real
-   held-out tasks it scored 63% — a gonogo tie with rules+LLM, +32 points over
-   rules alone; neither distinguishable at 0.95, hence opt-in. Train your own
-   from your ledger: `evalroute export-cases`, then the thomas recipe
-   (`examples/evalroute_lane_encoder.py`), then `install-encoder <dir>`. Task
-   text never leaves your machine in any of this.
+   calibrated threshold. Needs `pip install "evalroute[encoder]"`. Two ways
+   to get one, in this order:
+
+   **Train your own on your own work** (the default path). Your ledger holds
+   your real tasks with the lanes you pinned; nothing else does.
+   ```bash
+   evalroute export-cases --out cases.jsonl --seed-text     # your pinned routes as {id,text,label}; counts only on stdout
+   python examples/evalroute_lane_encoder.py --train train.jsonl --eval eval.jsonl --out my-encoder   # thomas; 30 s on CPU
+   evalroute install-encoder my-encoder
+   ```
+   Task text never leaves your machine. A dispatcher's ledger makes a coding
+   router; a researcher's makes a different one — that is the point.
+
+   **Or install the shared one** for day one:
+   `evalroute install-encoder keppy/evalroute-lane-encoder`. v1 scored 63%
+   on 19 real held-out tasks — a gonogo tie with rules+LLM, +32 points over
+   rules alone, neither distinguishable at 0.95, hence opt-in. It was trained
+   on public tasksets, lane seed text and LLM paraphrases of the lane
+   descriptions; five of nine lanes have never seen a real task. The
+   learning curve behind it says real rows are worth ~10× a paraphrase, so
+   the shared model is a floor, not the target.
 3. **Weak signal** (0-1 hits, no encoder or it abstained) — one structured call
    via the facade set with `routing.set_llm_facade` (the host's own model and
    auth; the plugin sets it at register time, but **it consumes tokens and may
@@ -487,6 +501,8 @@ core lives here). It relies on exactly the ten contract names in
   taskset with deterministic checkers and a paid harness run (~$1 per lane at
   current prices). Contributed rows can contest a priors lane but never make
   it `measured`.
-- Classifier: the shared encoder is opt-in until a real held-out set says it
-  beats rules+LLM at 0.95. Five of nine lanes have never seen a real task;
-  every `route --lane <id>` you run is a labeled row toward that.
+- Classifier: train your own encoder on your own ledger (free, local, 30 s).
+  The shared one is a day-one floor trained on public rows only; it improves
+  when people publish tasksets or contribute cases with text on purpose, not
+  from daily use — 67% of one dispatcher's labels were `routine-coding`, and
+  the five lanes it never routes to got zero rows.

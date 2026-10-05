@@ -234,6 +234,17 @@ def test_resume_counts_existing_aug_rows():
     """Re-running on a partial output fills gaps only and never reuses an aug id."""
     rows = [{"id": "r1", "text": "real one", "label": "prose"},
             {"id": "aug:prose:7", "text": "old aug", "label": "prose"}]
-    plan = {p["lane"]["id"]: p for p in augment.build_plan(rows, per_lane=5)}
+    plan = {p["lane"]["id"]: p for p in augment.build_plan(rows, per_lane=5, max_ratio=4.0)}
     assert plan["prose"]["real"] == 1 and plan["prose"]["have_aug"] == 1
     assert plan["prose"]["target"] == 3
+
+
+def test_max_ratio_caps_aug_at_real_rows_but_scaffolds_empty_lanes():
+    """Train F: paraphrases must never outnumber real rows in a lane that has any;
+    a lane with zero real rows gets the full per-lane count as scaffolding."""
+    rows = [{"id": f"r{i}", "text": f"real prose row {i}", "label": "prose"} for i in range(3)]
+    plan = {p["lane"]["id"]: p for p in augment.build_plan(rows, per_lane=30)}
+    assert plan["prose"]["target"] == 3          # 1.0 × 3 real
+    assert plan["web-research"]["target"] == 30  # no real rows → scaffolding
+    plan2 = {p["lane"]["id"]: p for p in augment.build_plan(rows, per_lane=30, max_ratio=0.5)}
+    assert plan2["prose"]["target"] == 1
