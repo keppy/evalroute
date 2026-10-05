@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.9.2] - 2026-10-05
+
+The harness is part of the arm.
+
+- **`harness`** on every outcome row, the sidecar, `rate --harness`, and `contribute` (`by_harness`;
+  `by_arm` keys gain `@<harness>` for non-hermes rows; old rows read as `hermes`). Same model and
+  effort under a different agent harness is a different arm — and `max_turns` is a different unit
+  per harness. Schema stays 2 (additive key).
+- **`claude-code` named runner**, verified against Claude Code 2.1.289 `-p` mode: `--effort` maps
+  1:1 (`none`/`minimal` → `low`), `--max-turns` passed, `--add-dir {indir}`, JSON result parsed —
+  `result` becomes the report, `session_id`/`num_turns`/`total_cost_usd`/`terminal_reason` land in
+  the sidecar, `is_error` counts as a failed exit. `EVALROUTE_HARNESS` names the harness when the
+  template's argv[0] is a wrapper.
+- **`dispatch --model/--effort`** override the routed arm (the route table may name a model the
+  harness cannot run); printed as `arm override: a -> b`, recorded as the actual arm.
+- Argv builder: dropping a `{max_turns}`/`{indir}` value also drops its preceding flag token
+  (no dangling `--max-turns`).
+- Fixes found by the first real Claude Code dispatch, not by tests: the runner template needed a
+  `--` before the prompt (Claude Code's `--add-dir` is variadic and swallowed the brief; exit 1 in
+  2 s); and `rate` on the CLI appended `--harness`/`--max-turns` after `--note`, where
+  `handle_rate` treats everything as note text, so both silently recorded as hermes/None.
+
 ## [0.9.1] - 2026-10-05
 
 Direction correction after train F's learning curve, and flywheel schema 2.

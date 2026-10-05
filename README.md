@@ -84,19 +84,35 @@ evalroute dispatch brief.md          # route a brief, spawn a worker on that arm
 evalroute dispatch brief.md --dry-run --json    # the dispatch sidecar object
 ```
 
-`--runner` selects who executes the brief: a named runner (`hermes` is the
-only built-in; its flags are this repo's own spawn path) or a template with
-placeholders `{model} {effort} {provider} {brief} {brief_text} {indir}` —
-substituted into already-split tokens, so spaces and quotes in paths survive:
+`--runner` selects who executes the brief. Two named runners are built in and
+verified against real flags: `hermes` (the default; its flags are this repo's
+own spawn path) and `claude-code` (Claude Code 2.1.289 `-p` mode: `--effort`
+maps 1:1, `--max-turns` is honoured, the JSON result's `session_id`,
+`num_turns`, `total_cost_usd` and `terminal_reason` land in the sidecar).
+Anything else is a template with placeholders `{model} {effort} {provider}
+{brief} {brief_text} {indir} {max_turns}` — substituted into already-split
+tokens, so spaces and quotes in paths survive:
 
 ```bash
-evalroute dispatch brief.md --runner "claude -p --model {model} {brief_text}"
+evalroute dispatch brief.md --runner claude-code --model opus --effort high --max-turns 300
+# or hand-roll the flags (budget, permission mode) — note the `--` before the prompt:
+evalroute dispatch brief.md --runner "claude -p --model {model} --effort {effort} \
+  --output-format json --permission-mode acceptEdits --max-budget-usd 20 \
+  --max-turns {max_turns} --add-dir {indir} -- {brief_text}"
 ```
 
+**The harness is part of the arm.** The same model at the same effort under
+Hermes and under Claude Code is a different arm — different system prompt,
+tools, approval model, and a different *unit* for `max_turns` (Hermes counts
+tool-call iterations; Claude Code counts agentic turns). So every outcome row
+carries `harness` and `max_turns` next to `model` and `effort`, the rate line
+prints them, and `contribute` pools by all four. `--model`/`--effort` on
+`dispatch` override the routed arm (the route table may name a model your
+harness cannot run); the override is recorded as the actual arm.
+
 Templates may omit `{effort}`: the card still records the routed effort and
-the rate line still carries `--effort`. Runner templates for claude, codex,
-and aider live in [docs/runners.md](docs/runners.md) as **unverified
-sketches** — only `hermes` has been checked against real flags. `dispatch`
+the rate line still carries `--effort`. Templates for codex and aider live in
+[docs/runners.md](docs/runners.md) as **unverified sketches**. `dispatch`
 never rates its own work: it prints the rate line for a second agent or human
 (the judge must not be the worker).
 
