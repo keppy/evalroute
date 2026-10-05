@@ -233,20 +233,30 @@ The classifier's first layer is deterministic keyword rules over
 `evalroute/data/routes.yaml` — free, no API calls — but rules alone misroute
 paraphrase ("manage life, writing, and researchy tasks" has zero keyword
 signal) and negation ("not usually hard math though" used to count as a
-math hit; the rules now guard negated keywords). So routing is two-layer:
+math hit; the rules now guard negated keywords). So routing is layered:
 
 1. **Strong rules** (2+ distinct keyword hits on the winning lane) — trusted
-   outright, no LLM call.
-2. **Weak signal** (0-1 hits) — one structured call via the facade set with
-   `routing.set_llm_facade` (the host's own model and auth; the plugin sets
-   it at register time, but **it consumes tokens and may incur provider
-   charges**). `None` (the default, and what a bare `evalroute` CLI sees)
-   disables the fallback. The LLM judges what the work IS — a description of
-   an assistant's duties routes to `orchestration`, not to whatever nouns
-   appear.
+   outright, no model call.
+2. **Encoder** (opt-in) — if you have installed one, a small local classifier
+   answers when the rules are weak, at $0 and offline, abstaining below its
+   calibrated threshold. `evalroute install-encoder keppy/evalroute-lane-encoder`
+   installs the shared v1 (`pip install "evalroute[encoder]"` first). On 19 real
+   held-out tasks it scored 63% — a gonogo tie with rules+LLM, +32 points over
+   rules alone; neither distinguishable at 0.95, hence opt-in. Train your own
+   from your ledger: `evalroute export-cases`, then the thomas recipe
+   (`examples/evalroute_lane_encoder.py`), then `install-encoder <dir>`. Task
+   text never leaves your machine in any of this.
+3. **Weak signal** (0-1 hits, no encoder or it abstained) — one structured call
+   via the facade set with `routing.set_llm_facade` (the host's own model and
+   auth; the plugin sets it at register time, but **it consumes tokens and may
+   incur provider charges**). `None` (the default, and what a bare `evalroute`
+   CLI sees) disables the fallback. The LLM judges what the work IS — a
+   description of an assistant's duties routes to `orchestration`, not to
+   whatever nouns appear.
 
-The card always prints which layer decided: `rules match`, `LLM fallback`,
-or `no keyword hit - defaulted`. If the LLM call fails (offline, no facade),
+The card always prints which layer decided: `rules match`, `encoder (opt-in)`,
+`LLM fallback`, or `no keyword hit - defaulted`, with `(encoder abstained)` when
+an installed encoder deferred. If the LLM call fails (offline, no facade),
 the weak rules result stands and the card says so. Pin manually with
 `--lane <id>` when you know better.
 
@@ -477,5 +487,6 @@ core lives here). It relies on exactly the ten contract names in
   taskset with deterministic checkers and a paid harness run (~$1 per lane at
   current prices). Contributed rows can contest a priors lane but never make
   it `measured`.
-- Classifier fine-tune: replacing the keyword+LLM-fallback layers with a
-  small trained classifier once the labeled corpus earns it.
+- Classifier: the shared encoder is opt-in until a real held-out set says it
+  beats rules+LLM at 0.95. Five of nine lanes have never seen a real task;
+  every `route --lane <id>` you run is a labeled row toward that.

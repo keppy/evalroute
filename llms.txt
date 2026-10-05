@@ -2,7 +2,7 @@
 
 > Route a task to the right (model, reasoning effort) arm before you start, and label outcomes so the route table improves from real work. Three lanes are measured (n=10 each, arms tied at p=1.0); six are priors from public benchmarks — the pipe is real, the table is small, your outcomes grow it.
 
-- [README](README.md): install, the CLI verbs (route, rate, sync, dispatch, report, contribute — all speak `--json`), the route table with provenance, the flywheel ledger, known limitations
+- [README](README.md): install, the CLI verbs (route, rate, sync, dispatch, report, contribute, export-cases, install-encoder), the route table with provenance, the flywheel ledger, known limitations
 - [AGENTS.md](AGENTS.md): the five-command agent loop, dispatch templates, sharing rules, `contribute` (opt-in, redacted outcome rows to your own path in the dataset)
 - [Route dataset](https://huggingface.co/datasets/keppy/evalroute-flywheel): the published route table, pinned to a commit sha by `evalroute sync`
 - [Plugin](https://github.com/keppy/hermes-plugin-evalroute): thin Hermes adapter over the same package (`/route`, `/rate`)

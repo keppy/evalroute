@@ -59,6 +59,12 @@ evalroute sync --status     # bundled or dataset @ <sha>
 evalroute sync --clear      # back to bundled
 ```
 
+Encoder (opt-in local classifier between rules and the LLM fallback):
+`evalroute install-encoder keppy/evalroute-lane-encoder` / `install-encoder <dir>` /
+`install-encoder --remove`; needs `evalroute[encoder]`. `evalroute export-cases --out
+cases.jsonl [--tasksets <dir>] [--seed-text]` writes your pinned routes as training rows
+(local file, counts only on stdout) for the thomas recipe.
+
 `sync` downloads data, not code, on your explicit command, pinned to a dataset commit
 sha, validated before activation; routing works offline on the bundled table without
 it. Needs `pip install "evalroute[hub]"`.

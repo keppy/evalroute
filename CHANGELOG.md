@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.0] - 2026-10-04
+
+### Added
+- `evalroute export-cases` — human-asserted lane labels (routes pinned with `--lane`,
+  corrections ×2, optional tasksets and lane seed text) as thomas encoder cases
+  (`{id, text, label}`). Local file; stdout carries counts only. Pinned routes with task
+  text under 12 chars are skipped as degenerate.
+- `encoder` classification method: an installed CONTRACT §4 artifact (ModernBERT-class
+  classifier with calibrated confidence) answers between the keyword rules and the LLM
+  fallback, abstaining below its `defer_below` threshold. Optional extra `evalroute[encoder]`;
+  nothing imports torch until an artifact is installed.
+- `evalroute install-encoder <dir | owner/name> [--remove] [--json]`. First shared artifact:
+  `keppy/evalroute-lane-encoder` (v1, **opt-in**: 63.2% on 19 real held-out tasks, a gonogo
+  tie with rules+LLM, +31.6 pts over rules alone at p=0.11).
+- `scripts/augment_cases.py` (training-only paraphrases over any OpenAI-compatible endpoint,
+  resumable) and `scripts/split_cases.py` (real-only stratified eval, audit `split.json`).
+- Card: `classification: encoder (opt-in) <acc> on <n> real held-out tasks · conf <c>`;
+  `(encoder abstained)` on the fallback line when an installed encoder deferred.
+  `report --json` header gains `classifier`.
+
+### Fixed
+- Card wrap: long field names were glued to their body when wrapped
+  (`classification:no keyword hit`).
+
 ## [0.8.3] - 2026-10-04
 
 ### Added
