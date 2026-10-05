@@ -89,10 +89,14 @@ def _labels_file(home):
 
 def test_redact_whitelist_keeps_only_KEPT_and_leaks_nothing(home):
     records = _ledger(home)
-    rows = contribute.redact(records, salt=b"\x01" * 32)
+    rows = [r for r in contribute.redact(records, salt=b"\x01" * 32)
+            if r["kind"] == "outcome"]
     assert rows, "outcome rows must survive"
     for row in rows:
-        assert set(row) == set(contribute.KEPT), set(row) ^ set(contribute.KEPT)
+        # schema 2: KEPT is the union whitelist across row kinds (outcomes do
+        # not carry from_lane/to_lane); the exact per-kind keys are asserted
+        # in tests/test_flywheel_schema2.py.
+        assert set(row) <= set(contribute.KEPT), set(row) - set(contribute.KEPT)
         assert re.fullmatch(r"[0-9a-f]{64}", row["task_hash"])
         assert isinstance(row["facets"], dict)
         assert all(isinstance(v, int) for v in row["facets"].values())
@@ -105,13 +109,15 @@ def test_redact_whitelist_keeps_only_KEPT_and_leaks_nothing(home):
 
 def test_task_hash_differs_across_salts(home):
     records = _ledger(home)
-    h1 = contribute.redact(records, b"\x01" * 32)[0]["task_hash"]
-    h2 = contribute.redact(records, b"\x02" * 32)[0]["task_hash"]
+    outcomes = lambda rows: [r for r in rows if r["kind"] == "outcome"]
+    h1 = outcomes(contribute.redact(records, b"\x01" * 32))[0]["task_hash"]
+    h2 = outcomes(contribute.redact(records, b"\x02" * 32))[0]["task_hash"]
     assert h1 != h2
 
 
 def test_rating_correction_overrides_rated_before_redaction(home):
-    rows = contribute.redact(_ledger(home), b"\x01" * 32)
+    rows = [r for r in contribute.redact(_ledger(home), b"\x01" * 32)
+            if r["kind"] == "outcome"]
     by_hash = {r["task_hash"]: r for r in rows}
     fixed = [r for r in rows if r["corrected"]]
     assert len(fixed) == 1
@@ -119,9 +125,11 @@ def test_rating_correction_overrides_rated_before_redaction(home):
 
 
 def test_no_route_rows_are_dropped_and_counted(home):
-    rows, summary = contribute.redact_report(_ledger(home), b"\x01" * 32)
+    records = _ledger(home)
+    rows, summary = contribute.redact_report(records, b"\x01" * 32)
+    outcome_rows = [r for r in rows if r["kind"] == "outcome"]
     assert summary["dropped_no_route"] == 1
-    assert summary["n_rows"] == len(rows)
+    assert summary["n_rows"] == len(outcome_rows)
 
 
 def test_summary_counts(home):
@@ -133,12 +141,14 @@ def test_summary_counts(home):
 
 
 def test_week_is_iso_year_week(home):
-    rows = contribute.redact(_ledger(home), b"\x01" * 32)
+    rows = [r for r in contribute.redact(_ledger(home), b"\x01" * 32)
+            if r["kind"] == "outcome"]
     assert all(r["week"] == "2026-W40" for r in rows)
 
 
 def test_arm_attribution_derived(home):
-    rows = contribute.redact(_ledger(home), b"\x01" * 32)
+    rows = [r for r in contribute.redact(_ledger(home), b"\x01" * 32)
+            if r["kind"] == "outcome"]
     attrs = {r["arm_attribution"] for r in rows}
     assert attrs == {"explicit_user", "unknown"}
 
@@ -247,8 +257,11 @@ def test_dry_run_prints_exact_rows_json_mode(home, capsys):
     _labels_file(home)
     assert contribute.run(dry_run=True, as_json=True) == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["summary"]["n_rows"] == len(data["rows"])
-    assert set(data["rows"][0]) == set(contribute.KEPT)
+    assert data["summary"]["n_rows"] == sum(r["kind"] == "outcome" for r in data["rows"])
+    outcome_rows = [r for r in data["rows"] if r["kind"] == "outcome"]
+    assert set(outcome_rows[0]) <= set(contribute.KEPT)
+    for row in data["rows"]:
+        assert set(row) <= set(contribute.KEPT)
     assert data["summary"]["salt"] in ("present", "created")
 
 
@@ -261,7 +274,7 @@ def test_upload_matches_dry_run_bytes_advances_cursor(home, monkeypatch, capsys)
     FakeHfApi.calls = []
     assert contribute.run() == 0
     out = capsys.readouterr().out
-    assert "uploaded 2 rows" in out
+    assert "uploaded 3 rows" in out
     assert "contributor-1" in out and "cafe" * 10 in out
     call = FakeHfApi.calls[0]
     assert call["path_in_repo"].startswith("contributed/contributor-1/")
@@ -307,7 +320,8 @@ def _redacted_rows(home, n_weeks=2):
         for r in records:
             if r.get("ts") is not None:
                 r["ts"] = ts + (r["ts"] - BASE_TS)
-        rows.extend(r for r in contribute.redact(records, b"\x01" * 32))
+        rows.extend(r for r in contribute.redact(records, b"\x01" * 32)
+                    if r["kind"] == "outcome")
     return rows
 
 

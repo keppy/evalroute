@@ -57,8 +57,27 @@ def _route(brief: Path, task: str, lane_id: str | None,
     return card, lane["model"], tools._effort_for_override(lane), provider, route_id
 
 
+def _resolve_max_turns(cli_value: Any = None) -> int | None:
+    """--max-turns CLI > `agent.max_turns` in <hermes_home>/config.yaml > None."""
+    if cli_value is not None:
+        return int(cli_value)
+    cfg = hermes_home() / "config.yaml"
+    if not cfg.exists():
+        return None
+    try:
+        import yaml
+
+        data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    raw = (data.get("agent") or {}).get("max_turns")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return None
+
+
 def _build_argv(model: str, effort: str, provider: str, brief: Path,
-                indir: str | None) -> list[str]:
+                indir: str | None, max_turns: int | None = None) -> list[str]:
     bin_spec = os.environ.get("EVALROUTE_HERMES_BIN") or shutil.which("hermes") or "hermes"
     # posix=False on Windows so backslash paths in the bin spec survive
     argv = [t.strip('"') for t in shlex.split(bin_spec, posix=(os.name != "nt"))]
@@ -67,6 +86,8 @@ def _build_argv(model: str, effort: str, provider: str, brief: Path,
              "--query-file", str(brief)]
     if indir:
         argv += ["--in", indir]
+    if max_turns is not None:
+        argv += ["--max-turns", str(max_turns)]
     return argv
 
 
@@ -80,9 +101,9 @@ _NAMED_RUNNERS: dict[str, str] = {
     "hermes": "hermes chat -Q --oneshot -m {model} --provider {provider} "
               "--reasoning {effort} --query-file {brief}",
 }
-
+ 
 _TEMPLATE_VARS = ("{model}", "{effort}", "{provider}", "{brief}", "{indir}",
-                  "{brief_text}")
+                  "{brief_text}", "{max_turns}")
 
 
 def _known_runners() -> list[str]:
@@ -107,7 +128,8 @@ def _resolve_runner(runner: str | None) -> str:
 
 
 def _build_runner_argv(template: str, model: str, effort: str, provider: str,
-                       brief: Path, indir: str | None) -> list[str]:
+                       brief: Path, indir: str | None,
+                       max_turns: int | None = None) -> list[str]:
     """Substitute placeholders into already-split tokens, never the raw string.
 
     shlex splits the template first; each token then gets its placeholder
@@ -122,13 +144,19 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
     for token in shlex.split(template, posix=(os.name != "nt")):
         if token == "{indir}" and not indir:
             continue
+        if token == "{max_turns}":
+            if max_turns is None:
+                continue
+            argv.append(str(max_turns))
+            continue
         value = (token
                  .replace("{model}", model)
                  .replace("{effort}", effort)
                  .replace("{provider}", provider)
                  .replace("{brief}", str(brief))
                  .replace("{indir}", str(indir or ""))
-                 .replace("{brief_text}", brief_text))
+                 .replace("{brief_text}", brief_text)
+                 .replace("{max_turns}", str(max_turns or "")))
         # posix=False on Windows keeps literal quotes around quoted backslash
         # paths ("C:\Users\...\python.exe"); strip them per token AFTER the
         # substitution so a substituted path with spaces is never re-split.
@@ -140,7 +168,7 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
 
 _SIDECAR_KEYS = ("route_id", "lane", "model", "effort", "provider", "runner",
                  "brief", "indir", "started", "ended", "duration_s", "exit",
-                 "session_id", "report", "rate_line")
+                 "session_id", "report", "rate_line", "max_turns")
 
 
 def _write_sidecar(brief: Path, run: dict[str, Any]) -> Path:
@@ -427,11 +455,12 @@ def run(args: Any) -> int:
     out_path = Path(args.out).resolve() if getattr(args, "out", None) else \
         brief.with_name(brief.stem + ".report.md")
     indir = getattr(args, "indir", None)
+    max_turns = _resolve_max_turns(getattr(args, "max_turns", None))
     is_hermes = template == _NAMED_RUNNERS["hermes"]
     if is_hermes:
-        argv = _build_argv(model, effort, provider, brief, indir)
+        argv = _build_argv(model, effort, provider, brief, indir, max_turns)
     else:
-        argv = _build_runner_argv(template, model, effort, provider, brief, indir)
+        argv = _build_runner_argv(template, model, effort, provider, brief, indir, max_turns)
     rate_line = f"rate it:  {tools.cmd_rate(route_id, model, effort, note='...')}"
     started_ts = time.time()
 
@@ -451,6 +480,7 @@ def run(args: Any) -> int:
             "brief": str(brief), "indir": indir, "started": None, "ended": None,
             "duration_s": None, "exit": None, "session_id": None,
             "report": str(out_path), "rate_line": rate_line,
+            "max_turns": max_turns,
         }
         sidecar["argv"] = shlex.join(argv)
         _write_sidecar(brief, sidecar)
@@ -483,12 +513,15 @@ def run(args: Any) -> int:
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started_ts)),
         "ended": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
         "duration_s": round(elapsed, 3), "exit": code, "session_id": session_id,
-        "report": str(out_path), "rate_line": rate_line,
+        "report": str(out_path), "rate_line": rate_line, "max_turns": max_turns,
     }
     _write_sidecar(brief, sidecar)
     rate_exit: dict[str, Any] | None = None
     if code != 0 and getattr(args, "rate_on_exit", None) == "fail":
         confirmation = fw.handle_rate(
+            f"fail --route-id {route_id} --model {model} --effort {effort} "
+            f"--max-turns {max_turns} --note exit {code}"
+            if max_turns is not None else
             f"fail --route-id {route_id} --model {model} --effort {effort} "
             f"--note exit {code}")
         if as_json:
@@ -499,7 +532,8 @@ def run(args: Any) -> int:
             sidecar["rate_on_exit"] = rate_exit
         else:
             print(confirmation)
-    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}), "
+    turns = f", {max_turns} turns" if max_turns is not None else ""
+    _emit(sidecar, [f"dispatched route {route_id} -> {model} @ {effort} ({lane_id or 'auto'}{turns}), "
            f"exit {code}, {_fmt_dur(elapsed)}",
            f"report: {out_path}   session: {session_id or '-'}",
            rate_line])

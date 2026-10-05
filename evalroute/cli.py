@@ -51,6 +51,8 @@ def setup_cli(subparser) -> None:
     rate_p.add_argument("--model", help="Confirm the actual arm's model id (diagnostic; with --effort)")
     rate_p.add_argument("--effort", help="Confirm the actual arm's effort (diagnostic; with --model)")
     rate_p.add_argument("--note", help="Why — the highest-value part of the label")
+    rate_p.add_argument("--max-turns", type=int, default=None,
+                        help="The agent's per-run tool-turn cap (part of the arm)")
     rate_p.add_argument("--json", action="store_true",
                         help="Print {\"logged\": ...} JSON instead of the human line")
     install_p = subs.add_parser("install-routes", help="Write the route table's effort "
@@ -79,6 +81,9 @@ def setup_cli(subparser) -> None:
     dispatch_p.add_argument("--task", help="Task description (default: the brief's first paragraph)")
     dispatch_p.add_argument("--out", help="Report path (default: <brief stem>.report.md beside it)")
     dispatch_p.add_argument("--timeout", type=float, help="Kill the child after SECONDS (exit 124)")
+    dispatch_p.add_argument("--max-turns", type=int, default=None,
+                            help="Per-run tool-turn cap passed to the worker "
+                                 "(default: agent.max_turns in config.yaml)")
     dispatch_p.add_argument("--rate-on-exit", choices=["fail"],
                             help="Auto-rate fail when the child exits non-zero (never auto-passes)")
     dispatch_p.add_argument("--follow", action="store_true",
@@ -200,6 +205,8 @@ def evalroute_cli(args) -> int:
             parts.append(f"--effort {args.effort}")
         if getattr(args, "note", None):
             parts.append(f"--note {args.note}")
+        if getattr(args, "max_turns", None) is not None:
+            parts.append(f"--max-turns {args.max_turns}")
         message = flywheel.handle_rate(" ".join(parts))
         if as_json:
             data = dict(getattr(flywheel, "_LAST_RATE", {}) or {})

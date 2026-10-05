@@ -219,10 +219,37 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
                      "arm": f"{rec.get('model') or '?'} @ {rec.get('effort') or '?'}",
                      "task": (rec.get("task") or "")[:80], "age": _age(rec.get("ts"))}
                     for rec in pending]
+
+    # Real labeled rows per lane: pinned routes with usable task text (the
+    # export_cases rule), deduped by task text, plus corrections per target lane.
+    from .export_cases import MIN_TEXT_CHARS
+    lane_ids = [lane["id"] for lane in routing._load_routes()]
+    seen_texts: set[str] = set()
+    real_rows: dict[str, int] = {lane: 0 for lane in lane_ids}
+    for rec in routes:
+        if rec.get("method") != "pinned":
+            continue
+        task = rec.get("task") or ""
+        if len(task) < MIN_TEXT_CHARS or task in seen_texts:
+            continue
+        seen_texts.add(task)
+        lane = rec.get("lane") or "?"
+        if lane in real_rows:
+            real_rows[lane] += 1
+    corrections_to: dict[str, int] = {lane: 0 for lane in lane_ids}
+    for rec in records:
+        if rec.get("kind") == "lane_correction":
+            lane = rec.get("to_lane") or "?"
+            if lane in corrections_to:
+                corrections_to[lane] += 1
+    labels = [{"lane": lane, "real_rows": real_rows[lane],
+               "corrections_to": corrections_to[lane]} for lane in lane_ids]
+
     return {"routes": len(routes), "_routes_raw": routes,
             "outcomes": len(outcomes_all),
             "pending": pending_rows, "outcome_rows": outcome_rows,
             "tally": tally_rows,
+            "labels": labels,
             "methods": [{"method": m, "routes": c} for m, c in sorted(methods.items())]}
 
 
@@ -372,6 +399,22 @@ def _methods_section(data: dict[str, Any]) -> str:
         rows = "<tr><td colspan='2' class='note'>no routes on file</td></tr>"
     return ("<h2 id='methods'>Classification methods</h2>"
             "<table><tr><th>method</th><th>routes</th></tr>" + rows + "</table>")
+
+
+def _labels_section(data: dict[str, Any]) -> str:
+    rows = ""
+    for lab in data["labels"]:
+        note = ""
+        if lab["real_rows"] < 8:
+            note = (f"<td class='note'>pin 8 real tasks here: "
+                    f"evalroute route --lane {lab['lane']} \"&lt;task&gt;\"</td>")
+        else:
+            note = "<td></td>"
+        rows += (f"<tr><td>{_esc(lab['lane'])}</td><td>{lab['real_rows']}</td>"
+                 f"<td>{lab['corrections_to']}</td>{note}</tr>")
+    return ("<h2 id='labels'>Real labeled rows per lane</h2>"
+            "<table><tr><th>lane</th><th>real labeled rows</th>"
+            "<th>corrections → lane</th><th></th></tr>" + rows + "</table>")
 
 
 # ------------------------------------------------------------- session store
@@ -732,6 +775,7 @@ def _data_model(trains: Path | None, factory_json: str | None,
         "pending": ledger["pending"],
         "outcome_rows": ledger["outcome_rows"],
         "tally": ledger["tally"],
+        "labels": ledger["labels"],
         "methods": ledger["methods"],
         "sessions": sessions,
         "trains": trains_data,
@@ -752,7 +796,8 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
     palette = _THEMES[theme_name]
     css = _CSS.substitute(**palette, mono=_MONO)
     ledger = {"pending": data["pending"], "outcome_rows": data["outcome_rows"],
-              "tally": data["tally"], "methods": data["methods"]}
+              "tally": data["tally"], "methods": data["methods"],
+              "labels": data["labels"]}
 
     header = (
         f"generated {data['generated']} | evalroute {data['evalroute_version']} | "
@@ -764,6 +809,7 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
         _outcomes_section(ledger),
         _tally_section(ledger),
         _methods_section(ledger),
+        _labels_section(ledger),
         _sessions_section(data["sessions"]),
         _trains_section(data["trains"]),
         _drift_section(data["drift"]),

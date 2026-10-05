@@ -176,7 +176,7 @@ def _merge_with_stats(routes_path: Path, stats: dict,
 def aggregate_contributed(rows: list[dict[str, Any]],
                           known_models: Optional[set[str]] = None,
                           max_age_days: int = MAX_STALE_DAYS) -> dict:
-    """Per-lane arm statistics over REDACTED contributed rows (schema 1).
+    """Per-lane arm statistics over REDACTED contributed rows (schema 2).
 
     Same shape as aggregate(), but keyed by ``route_lane`` and staleness by
     ISO ``week`` instead of ``ts``. ``known_models`` (the models already in

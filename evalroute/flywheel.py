@@ -234,14 +234,15 @@ def handle_rate(raw_args: str) -> str:
     rating = args[0].lower()
     if rating in ("p", "f"):
         rating = "pass" if rating == "p" else "fail"
-    lane_fix = route_id = note = confirmed_model = confirmed_effort = ""
+    lane_fix = route_id = note = confirmed_model = confirmed_effort = max_turns = ""
     i = 1
     while i < len(args):
-        if args[i] in ("--lane", "--route-id", "--model", "--effort") and i + 1 < len(args):
+        if args[i] in ("--lane", "--route-id", "--model", "--effort", "--max-turns") and i + 1 < len(args):
             flag, value = args[i], args[i + 1]
             if flag == "--lane": lane_fix = value
             elif flag == "--route-id": route_id = value
             elif flag == "--model": confirmed_model = value
+            elif flag == "--max-turns": max_turns = value
             else: confirmed_effort = value.lower()
             i += 2
         elif args[i] == "--note" and i + 1 < len(args):
@@ -249,6 +250,10 @@ def handle_rate(raw_args: str) -> str:
             break
         else:
             return f"evalroute: invalid or incomplete /rate option {args[i]!r}; use /rate with no args for help"
+    try:
+        max_turns_val: Optional[int] = int(max_turns) if max_turns else None
+    except ValueError:
+        return "evalroute: invalid --max-turns (must be an integer)"
     if bool(confirmed_model) != bool(confirmed_effort):
         return "evalroute: use --model and --effort together to confirm the actual arm"
     if confirmed_model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", confirmed_model):
@@ -283,6 +288,7 @@ def handle_rate(raw_args: str) -> str:
         "actual_model": confirmed_model or None, "actual_effort": confirmed_effort or None,
         "arm_attribution": "explicit_user" if confirmed_model else "unknown",
         "method": route.get("method"), "confidence": route.get("confidence"),
+        "max_turns": max_turns_val,
         "consumes": route.get("ts"), "consumes_id": route.get("id"),
     }
     if route.get("facets"):
