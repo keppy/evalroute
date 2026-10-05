@@ -190,3 +190,19 @@ def test_demo_ignores_real_state_db(tmp_path, monkeypatch):
     data = report._data_model(None, None, True)
     assert data["sessions"].get("source") == "dispatch sidecars"
     assert data["now"]["cheapest_arm_this_week"].startswith("z-ai/glm-5.3-flash@medium $")
+
+
+def test_html_strip_matches_json_now(demo_home):
+    """The HTML Now strip and the --json `now` block are one computation. Before:
+    the HTML recomputed from the top-level dict (no `_routes_raw`) and showed
+    'routes today 0' while --json said 6."""
+    import re
+    from types import SimpleNamespace
+    from evalroute import report
+    args = SimpleNamespace(out=str(demo_home / "r.html"), json=False, open=False, watch=None,
+                           trains=None, factory_json=None, demo=True, theme="dark")
+    assert report.run(args) == 0
+    html_text = (demo_home / "r.html").read_text(encoding="utf-8")
+    cell = re.search(r"routes today</div><div class='v'>([^<]+)</div>", html_text)
+    data = report._data_model(None, None, True)
+    assert cell and cell.group(1) == data["now"]["routes_today"] != "0"

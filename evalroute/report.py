@@ -278,14 +278,17 @@ def _now_strip_data(data: dict[str, Any]) -> dict[str, str]:
     return cells
 
 
-def _now_strip(data: dict[str, Any]) -> str:
-    """The four-cell Now strip under the header."""
-    cells = _now_strip_data(data)
+def _now_strip_html(cells: dict[str, str]) -> str:
+    """The four-cell Now strip under the header, from the computed `now` block."""
     inner = "".join(
         f"<div class='cell'><div class='k'>{_esc(k.replace('_', ' '))}</div>"
         f"<div class='v'>{_esc(v)}</div></div>"
         for k, v in cells.items())
     return f"<div class='nowstrip' id='nowstrip'>{inner}</div>"
+
+
+def _now_strip(data: dict[str, Any]) -> str:
+    return _now_strip_html(_now_strip_data(data))
 
 
 def _now_section(pending: list[dict[str, Any]]) -> str:
@@ -765,10 +768,11 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
              "padding:0.15rem 0.5rem;border-radius:3px;font-size:0.8rem;"
              "font-weight:700'>DEMO DATA — synthetic fixture, never your "
              "ledger</p>") if is_demo else ""
-    now_json = _now_strip_data(data)
+    # One source of truth: the HTML strip renders the same `now` block --json
+    # exports (recomputing from the top-level dict lost `_routes_raw` -> "0").
     return _PAGE.substitute(header=_esc(header) + badge,
                             style=css,
-                            nowstrip=_now_strip(data),
+                            nowstrip=_now_strip_html(data["now"]),
                             body=body, footer=_esc(command))
 
 
