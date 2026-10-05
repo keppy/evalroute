@@ -5,7 +5,9 @@ lane writes synthetic task requests to bring the lane up to --per-lane rows.
 Augmentation is training-only: eval must stay real rows (see split_cases).
 
 The standalone library has no LLM client, so this script owns a minimal one:
-OpenAI-compatible chat completions over OPENROUTER_API_KEY via urllib only.
+OpenAI-compatible chat completions via urllib only. Endpoint and key come
+from EVALROUTE_LLM_BASE_URL / EVALROUTE_LLM_API_KEY (any OpenAI-compatible
+server), falling back to OpenRouter with OPENROUTER_API_KEY.
 Ledger text is private — prompts carry lane metadata and taskset rows only,
 never ledger route rows.
 
@@ -28,7 +30,14 @@ from pathlib import Path
 
 from evalroute.routing import _load_routes
 
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _endpoint() -> tuple[str, str | None]:
+    """(chat-completions URL, key) from env; generic names win over OpenRouter."""
+    base = os.environ.get("EVALROUTE_LLM_BASE_URL") or DEFAULT_BASE_URL
+    key = os.environ.get("EVALROUTE_LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+    return base.rstrip("/") + "/chat/completions", key
 DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 PER_CALL = 10
 
@@ -38,7 +47,8 @@ class ChatClient:
 
     def __init__(self, model: str, api_key: str | None = None):
         self.model = model
-        self.key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY")
+        self.url, env_key = _endpoint()
+        self.key = api_key if api_key is not None else env_key
         self.prompt_tokens = 0
         self.completion_tokens = 0
 
@@ -49,7 +59,7 @@ class ChatClient:
             "messages": [{"role": "user", "content": prompt}],
         }).encode("utf-8")
         req = urllib.request.Request(
-            API_URL, data=body,
+            self.url, data=body,
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {self.key}"})
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -170,7 +180,8 @@ def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
         return 0
     client = ChatClient(model)
     if client.key is None:
-        print("augment_cases: OPENROUTER_API_KEY is not set", file=sys.stderr)
+        print("augment_cases: no API key — set EVALROUTE_LLM_API_KEY (+ EVALROUTE_LLM_BASE_URL) "
+              "or OPENROUTER_API_KEY", file=sys.stderr)
         return 2
     generated: dict[str, list[str]] = {ln["id"]: [] for ln in lanes}
     real_norm = {_norm(r["text"]) for r in rows if not str(r.get("id", "")).startswith("seed:")}
@@ -187,7 +198,10 @@ def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
                     try:
                         lines = client.chat(prompt)
                         break
-                    except Exception:
+                    except Exception as exc:  # noqa: BLE001 — report, then retry once
+                        # Never echo the prompt or key; the exception text is enough.
+                        print(f"augment_cases: {lane_id} call {call + 1} attempt {attempt} "
+                              f"failed: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
                         if attempt == 2:
                             break
                 for ln in lines:
@@ -197,7 +211,7 @@ def run(rows: list[dict], out_path: Path, per_lane: int, model: str,
                         continue
                     generated[lane_id].append(text)
                     made += 1
-        short[lane_id] = min(made, p["target"])
+        short[lane_id] = min(made, max(p["target"], 0))
     out = list(rows)
     n = 0
     for p in plan:

@@ -214,3 +214,17 @@ def test_split_leak_drop(tmp_path):
     assert rc == 0
     audit = json.loads(split_f.read_text(encoding="utf-8"))
     assert audit["leaked_dropped"] >= 1
+
+
+def test_endpoint_generic_env_wins_over_openrouter(monkeypatch):
+    """Any OpenAI-compatible server works (a QR arrival may have no OpenRouter key)."""
+    ac = augment
+    monkeypatch.delenv("EVALROUTE_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.delenv("EVALROUTE_LLM_API_KEY", raising=False)
+    url, key = ac._endpoint()
+    assert url == "https://openrouter.ai/api/v1/chat/completions" and key == "or-key"
+    monkeypatch.setenv("EVALROUTE_LLM_BASE_URL", "https://example.test/v1/")
+    monkeypatch.setenv("EVALROUTE_LLM_API_KEY", "gen-key")
+    url, key = ac._endpoint()
+    assert url == "https://example.test/v1/chat/completions" and key == "gen-key"
