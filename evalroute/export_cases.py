@@ -27,6 +27,9 @@ from .routes_from_report import LANE_ALIASES
 from .routing import _load_routes
 
 SOURCES = ("ledger", "correction", "taskset", "seed")
+# Pinned routes whose task text is shorter than this are human-asserted but
+# carry no learnable signal ("x", "test", a bare filename); skipped, counted.
+MIN_TEXT_CHARS = 12
 
 
 def _load_tasksets(spec: str) -> list[dict[str, str]]:
@@ -91,13 +94,21 @@ def collect_cases(tasksets: str = "", seed_text: bool = False,
     ledger_rows: list[dict[str, str]] = []
     correction_rows: list[dict[str, str]] = []
     unlabeled = 0
+    degenerate = 0
     for r in labels:
         if r.get("kind") != "route":
             continue
         if r.get("method") != "pinned":
             unlabeled += 1
             continue
-        row = {"id": r["id"], "text": r["task"], "label": r["lane"]}
+        task = str(r.get("task", "")).strip()
+        # A pinned route with a one-word task ("x", "test", a filename) is a
+        # human asserting a lane, but the text carries no signal to learn —
+        # it only adds noise to training and false misses to eval.
+        if len(task) < MIN_TEXT_CHARS:
+            degenerate += 1
+            continue
+        row = {"id": r["id"], "text": task, "label": r["lane"]}
         if r["lane"] == _correction_lane(r["task"], corrections):
             correction_rows.append(row)
             continue
@@ -135,6 +146,7 @@ def collect_cases(tasksets: str = "", seed_text: bool = False,
     stats: dict[str, Any] = {
         "sources": counts,
         "unlabeled": unlabeled,
+        "degenerate": degenerate,
         "dedupe_removed": deduped_sources,
         "total": len(out),
     }
@@ -185,6 +197,9 @@ def run_export(out: Path, tasksets: str = "", seed_text: bool = False,
             print(f"  {lane}: {parts}")
         if stats["unlabeled"]:
             print(f"  unlabeled (non-pinned routes, not exported): {stats['unlabeled']}")
+        if stats.get("degenerate"):
+            print(f"  degenerate (pinned, task text under {MIN_TEXT_CHARS} chars, "
+                  f"not exported): {stats['degenerate']}")
         for b in stats["below_min"]:
             print(f"  below min {min_per_lane}: {b['lane']} ({b['count']})")
     return 3 if (strict and stats["below_min"]) else 0

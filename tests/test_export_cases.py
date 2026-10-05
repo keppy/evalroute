@@ -65,9 +65,9 @@ def _read(out):
 
 def test_pinned_exported_nonpinned_unlabeled(home, tmp_path):
     _write_ledger(home, [
-        _pinned("a" * 32, "task one"),
+        _pinned("a" * 32, "fix task one in the parser"),
         _pinned("b" * 32, SENTINEL, method="llm"),
-        _pinned("c" * 32, "task three", method="rules-strong"),
+        _pinned("c" * 32, "fix task three in the parser", method="rules-strong"),
     ])
     out = tmp_path / "cases.jsonl"
     rc = export_cases.run_export(out, as_json=True)
@@ -131,12 +131,12 @@ def test_seed_text_rows(home, tmp_path):
 
 
 def test_exact_text_dedupe(home, tmp_path):
-    _write_ledger(home, [_pinned("a" * 32, "same text")])
+    _write_ledger(home, [_pinned("a" * 32, "the same text twice over")])
     d = _taskset_dir(tmp_path)
     # make the taskset row duplicate the ledger text exactly
     p = d / "tasks.jsonl"
     rows = [json.loads(l) for l in p.read_text().splitlines()]
-    rows.append({"id": "rc-3", "lane": "routine-coding", "prompt": "same text"})
+    rows.append({"id": "rc-3", "lane": "routine-coding", "prompt": "the same text twice over"})
     p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     out = tmp_path / "cases.jsonl"
     import io, contextlib
@@ -144,7 +144,7 @@ def test_exact_text_dedupe(home, tmp_path):
     with contextlib.redirect_stdout(buf):
         export_cases.run_export(out, tasksets=str(d), as_json=True)
     texts = [r["text"] for r in _read(out)]
-    assert texts.count("same text") == 1
+    assert texts.count("the same text twice over") == 1
 
 
 def test_stdout_never_contains_task_text(home, tmp_path, capsys):
@@ -161,7 +161,7 @@ def test_stdout_never_contains_task_text(home, tmp_path, capsys):
 
 
 def test_strict_exit_3_on_short_lane(home, tmp_path):
-    _write_ledger(home, [_pinned("a" * 32, "task one")])
+    _write_ledger(home, [_pinned("a" * 32, "fix task one in the parser")])
     out = tmp_path / "cases.jsonl"
     import io, contextlib
     buf = io.StringIO()
@@ -180,7 +180,7 @@ def test_strict_exit_3_on_short_lane(home, tmp_path):
 
 def test_summary_counts_match_file(home, tmp_path):
     _write_ledger(home, [
-        _pinned("a" * 32, "task one"),
+        _pinned("a" * 32, "fix task one in the parser"),
         _pinned("b" * 32, SENTINEL, method="llm"),
     ])
     d = _taskset_dir(tmp_path)
@@ -198,7 +198,7 @@ def test_summary_counts_match_file(home, tmp_path):
 
 
 def test_json_shape(home, tmp_path):
-    _write_ledger(home, [_pinned("a" * 32, "task one")])
+    _write_ledger(home, [_pinned("a" * 32, "fix task one in the parser")])
     out = tmp_path / "cases.jsonl"
     import io, contextlib
     buf = io.StringIO()
@@ -212,7 +212,7 @@ def test_json_shape(home, tmp_path):
 
 def test_rows_validate_contract_shape(home, tmp_path):
     _write_ledger(home, [
-        _pinned("a" * 32, "task one"),
+        _pinned("a" * 32, "fix task one in the parser"),
         _pinned("b" * 32, SENTINEL, method="llm"),
     ])
     d = _taskset_dir(tmp_path)
@@ -231,7 +231,7 @@ def test_rows_validate_contract_shape(home, tmp_path):
 
 
 def test_cli_end_to_end(home, tmp_path):
-    _write_ledger(home, [_pinned("a" * 32, "task one")])
+    _write_ledger(home, [_pinned("a" * 32, "fix task one in the parser")])
     out = tmp_path / "cases.jsonl"
     env = dict()
     env.update(**{k: v for k, v in __import__("os").environ.items()})
@@ -259,3 +259,19 @@ def test_taskset_lane_spelling_normalised(tmp_path):
         '{"id": "t1", "lane": "routine coding", "prompt": "add a flag"}\n', encoding="utf-8")
     rows = export_cases._load_tasksets(str(tmp_path))
     assert [r["label"] for r in rows] == ["routine-coding"]
+
+
+def test_degenerate_pinned_tasks_are_skipped(tmp_path, monkeypatch):
+    """'x' pinned to a lane is a label with no text to learn from; skip and count it."""
+    import json
+    from evalroute import export_cases
+    home = tmp_path / "home"; (home / "evalroute").mkdir(parents=True)
+    monkeypatch.setenv("EVALROUTE_HOME", str(home))
+    rows = [
+        {"kind": "route", "id": "a1", "method": "pinned", "lane": "prose", "task": "x", "ts": "2026-10-04 10:00"},
+        {"kind": "route", "id": "a2", "method": "pinned", "lane": "prose", "task": "draft the launch announcement for the new router", "ts": "2026-10-04 10:01"},
+    ]
+    (home / "evalroute" / "labels.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    out, stats = export_cases.collect_cases()
+    assert [r["id"] for r in out] == ["a2"]
+    assert stats["degenerate"] == 1
