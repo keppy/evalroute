@@ -41,20 +41,23 @@ def _default_task(brief_path: Path) -> str:
 
 
 def _route(brief: Path, task: str, lane_id: str | None,
-           replace_id: str = "") -> tuple[str, str, str, str, str | None]:
+           replace_id: str = "", no_explore: bool = False
+           ) -> tuple[str, str, str, str, str | None, str | None]:
     """Route via the same functions the `route --json` path calls.
 
-    Returns (card, model, effort, provider, route_id).
+    Returns (card, model, effort, provider, route_id, explore_default).
     """
     raw = task
     if lane_id:
         raw = f"--lane {lane_id} {task}"
         if replace_id:
             raw = f"--lane {lane_id} --replace-route-id {replace_id} {task}"
-    card, lane, conf, pinned, method, route_id = tools._route_for_args(raw)
+    card, lane, conf, pinned, method, route_id = tools._route_for_args(
+        raw, no_explore=no_explore)
     envelope = tools._tool_result(card, lane, conf, pinned, method=method, route_id=route_id)
     provider = json.loads(envelope)["provider"]
-    return card, lane["model"], tools._effort_for_override(lane), provider, route_id
+    return (card, lane["model"], tools._effort_for_override(lane), provider,
+            route_id, lane.get("explore_default"))
 
 
 def _resolve_max_turns(cli_value: Any = None) -> int | None:
@@ -209,7 +212,8 @@ def _build_runner_argv(template: str, model: str, effort: str, provider: str,
 _SIDECAR_KEYS = ("route_id", "lane", "model", "effort", "provider", "runner",
                  "harness", "brief", "indir", "started", "ended", "duration_s",
                  "exit", "session_id", "report", "rate_line", "max_turns",
-                 "harness_turns", "harness_cost_usd", "harness_terminal")
+                 "harness_turns", "harness_cost_usd", "harness_terminal",
+                 "explore", "explore_default")
 
 
 def _write_sidecar(brief: Path, run: dict[str, Any]) -> Path:
@@ -481,8 +485,16 @@ def run(args: Any) -> int:
         comment = _ROUTE_ID_COMMENT.search(brief.read_text(encoding="utf-8"))
         if comment:
             replace_id = comment.group(1)
+    # --model / --effort overrides replace the arm for the spawn, so an explore
+    # draw on that route would record an explored arm that never ran: force
+    # no_explore whenever either is given. Read both before calling _route.
+    override_model_early = getattr(args, "model_override", None)
+    override_effort_early = getattr(args, "effort_override", None)
     try:
-        card, model, effort, provider, route_id = _route(brief, task, lane_id, replace_id)
+        card, model, effort, provider, route_id, explore_default = _route(
+            brief, task, lane_id, replace_id,
+            no_explore=bool(getattr(args, "no_explore", False))
+            or override_model_early is not None or override_effort_early is not None)
     except Exception as exc:
         print(f"evalroute dispatch: {exc}", file=sys.stderr)
         return 1
@@ -492,6 +504,9 @@ def run(args: Any) -> int:
         print("evalroute: route could not be recorded; not spawning", file=sys.stderr)
         return 1
     print(card, file=sys.stderr)
+    if explore_default:
+        print(f"explore: runner-up arm {model}@{effort} (default {explore_default})",
+              file=sys.stderr)
 
     out_path = Path(args.out).resolve() if getattr(args, "out", None) else \
         brief.with_name(brief.stem + ".report.md")
@@ -557,6 +572,8 @@ def run(args: Any) -> int:
             "duration_s": None, "exit": None, "session_id": None,
             "report": str(out_path), "rate_line": rate_line,
             "max_turns": max_turns,
+            "explore": bool(explore_default),
+            "explore_default": explore_default,
         }
         sidecar["argv"] = shlex.join(argv)
         _write_sidecar(brief, sidecar)
@@ -614,6 +631,7 @@ def run(args: Any) -> int:
         "report": str(out_path), "rate_line": rate_line, "max_turns": max_turns,
         "harness_turns": harness_turns, "harness_cost_usd": harness_cost,
         "harness_terminal": harness_terminal,
+        "explore": bool(explore_default), "explore_default": explore_default,
     }
     _write_sidecar(brief, sidecar)
     rate_exit: dict[str, Any] | None = None

@@ -65,6 +65,8 @@ KEPT = (
     "facets",
     "max_turns",
     "harness",
+    "explore",
+    "explore_default",
     "week",
     "task_hash",
     "corrected",
@@ -257,6 +259,10 @@ def redact_report(records: list[dict[str, Any]], salt: bytes,
             # Old rows predate the key; hermes was the only harness then, so
             # the default is written in rather than left missing.
             "harness": out.get("harness") or "hermes",
+            # Text-free: a bool and an arm id from the route record; old
+            # rows predate the keys and default to False/None.
+            "explore": bool(route.get("explore")),
+            "explore_default": route.get("explore_default"),
             "week": _week(float(out.get("ts", 0))),
             "task_hash": _task_hash(route["task"], salt),
             "corrected": corrected,

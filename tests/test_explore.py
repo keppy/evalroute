@@ -10,6 +10,9 @@ from evalroute import explore
 from evalroute import flywheel
 
 
+from tests.test_contribute import home  # noqa: F401  (pytest fixture import)
+
+
 @pytest.fixture(autouse=True)
 def _no_explore_env(monkeypatch):
     monkeypatch.delenv("EVALROUTE_EXPLORE", raising=False)
@@ -126,3 +129,103 @@ def test_non_explore_card_byte_identical(tmp_path, monkeypatch):
     card_on = routing._route_for_args("--lane routine-coding fix the parser test")[0]
     # Route IDs are random UUIDs; everything else must be byte-identical.
     assert re.sub(r"[0-9a-f]{32}", "<id>", card_off) == re.sub(r"[0-9a-f]{32}", "<id>", card_on)
+
+
+# ------------------------------------------------------------------ brief 02
+
+
+def test_cli_route_no_explore_flag(tmp_path, monkeypatch, capsys):
+    from evalroute import cli as cli_mod
+    from types import SimpleNamespace
+    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
+    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
+    ns = SimpleNamespace(evalroute_action="route", task=["fix the parser test"],
+                         lane="routine-coding", replace_route_id=None, wide=False,
+                         no_explore=True, json=False)
+    assert cli_mod.evalroute_cli(ns) == 0
+    out = capsys.readouterr().out
+    assert "explore:" not in out
+    assert "z-ai/glm-5.3-flash" in out
+    rows = [r for r in flywheel.read_labels() if r.get("kind") == "route"]
+    assert "explore" not in rows[-1]
+
+
+def test_cli_route_explores_without_flag(tmp_path, monkeypatch, capsys):
+    from evalroute import cli as cli_mod
+    from types import SimpleNamespace
+    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
+    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
+    ns = SimpleNamespace(evalroute_action="route", task=["fix the parser test"],
+                         lane="routine-coding", replace_route_id=None, wide=False,
+                         no_explore=False, json=False)
+    assert cli_mod.evalroute_cli(ns) == 0
+    out = capsys.readouterr().out
+    assert "explore: runner-up arm" in out
+    assert "deepseek/deepseek-v4.1-flash" in out
+
+
+def test_dispatch_dry_run_explore_sidecar(home, tmp_path, monkeypatch, capsys):
+    from tests.test_dispatch import _dry_run_dispatch
+    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
+    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
+    rc, out, sidecar = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                                  lane="routine-coding")
+    assert rc == 0
+    assert sidecar["explore"] is True
+    assert sidecar["explore_default"] == "z-ai/glm-5.3-flash@medium"
+    assert sidecar["model"] == "deepseek/deepseek-v4.1-flash"
+    # The `explore: runner-up arm ...` stderr line after the card is not in
+    # `out` (_dry_run_dispatch returns stdout only); it is checked in the
+    # hand probe and the card path is covered by the route CLI test above.
+
+
+def test_dispatch_dry_run_override_forces_no_explore(home, tmp_path, monkeypatch, capsys):
+    from tests.test_dispatch import _dry_run_dispatch
+    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
+    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
+    rc, out, sidecar = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
+                                                  lane="routine-coding",
+                                                  model_override="z-ai/glm-5.3-flash",
+                                                  effort_override="medium")
+    assert rc == 0
+    assert sidecar["explore"] is False
+    assert sidecar["explore_default"] is None
+    assert sidecar["model"] == "z-ai/glm-5.3-flash"
+    rows = [r for r in flywheel.read_labels() if r.get("kind") == "route"]
+    assert "explore" not in rows[-1]
+
+
+def test_redact_outcome_rows_carry_explore_fields(home):
+    import evalroute.contribute as contribute
+    task = "fix the NaN loss in our GRPO run"
+    records = [
+        {"kind": "route", "id": "r1", "ts": 1000.0, "task": task,
+         "lane": "routine-coding", "model": "deepseek/deepseek-v4.1-flash",
+         "effort": "medium", "method": "rules-strong", "confidence": 0.9,
+         "explore": True, "explore_default": "z-ai/glm-5.3-flash@medium"},
+        {"kind": "route", "id": "r2", "ts": 1010.0, "task": "write a blog post",
+         "lane": "routine-coding", "model": "z-ai/glm-5.3-flash", "effort": "medium",
+         "method": "rules-weak", "confidence": 0.4},
+        {"kind": "outcome", "ts": 1020.0, "rated": "pass",
+         "route_lane": "routine-coding", "route_model": "deepseek/deepseek-v4.1-flash",
+         "route_effort": "medium", "actual_model": None, "actual_effort": None,
+         "arm_attribution": "unknown", "method": "rules-strong", "confidence": 0.9,
+         "consumes": 1000.0, "consumes_id": "r1"},
+        {"kind": "outcome", "ts": 1030.0, "rated": "fail",
+         "route_lane": "routine-coding", "route_model": "z-ai/glm-5.3-flash",
+         "route_effort": "medium", "actual_model": None, "actual_effort": None,
+         "arm_attribution": "unknown", "method": "rules-weak", "confidence": 0.4,
+         "consumes": 1010.0, "consumes_id": "r2"},
+    ]
+    rows = [r for r in contribute.redact(records, salt=b"\x01" * 32)
+            if r["kind"] == "outcome"]
+    assert len(rows) == 2
+    by_rated = {r["rated"]: r for r in rows}
+    assert by_rated["pass"]["explore"] is True
+    assert by_rated["pass"]["explore_default"] == "z-ai/glm-5.3-flash@medium"
+    assert by_rated["fail"]["explore"] is False
+    assert by_rated["fail"]["explore_default"] is None
+    for row in rows:
+        assert set(row) <= set(contribute.KEPT), set(row) - set(contribute.KEPT)
+        serialised = json.dumps(row)
+        assert task not in serialised and "blog post" not in serialised

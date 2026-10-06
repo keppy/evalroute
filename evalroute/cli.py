@@ -39,6 +39,8 @@ def setup_cli(subparser) -> None:
     route_p.add_argument("--replace-route-id", help="Replace a specific pending route (requires --lane)")
     route_p.add_argument("--wide", action="store_true",
                          help="Single-line card for log scrapers (default: wraps at 100 columns)")
+    route_p.add_argument("--no-explore", action="store_true",
+                         help="Never use the runner-up arm for this route")
     route_p.add_argument("--json", action="store_true",
                          help="Print the tool-result JSON envelope instead of the card")
     rate_p = subs.add_parser("rate", help="Rate the last routed task: pass|fail",
@@ -93,6 +95,8 @@ def setup_cli(subparser) -> None:
                                  "session store to stderr while it runs")
     dispatch_p.add_argument("--dry-run", action="store_true",
                             help="Route and print the argv; spawn nothing")
+    dispatch_p.add_argument("--no-explore", action="store_true",
+                            help="Never use the runner-up arm for this route")
     dispatch_p.add_argument("--model", dest="model_override", default=None,
                             help="Override the routed model for the spawn (the "
                                  "card still shows the routed arm)")
@@ -253,7 +257,8 @@ def evalroute_cli(args) -> int:
             else:
                 raw = task
             card, lane_obj, conf, pinned, method, route_id = _route_for_args(
-                raw, wide=bool(getattr(args, "wide", False)))
+                raw, wide=bool(getattr(args, "wide", False)),
+                no_explore=bool(getattr(args, "no_explore", False)))
         except Exception as exc:
             print(f"evalroute: {exc}")
             return 1
