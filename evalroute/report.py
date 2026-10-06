@@ -252,44 +252,11 @@ def _ledger_data(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     labels = [{"lane": lane, "real_rows": real_rows[lane],
                "corrections_to": corrections_to[lane]} for lane in lane_ids]
 
-    # Exploration: one entry per explore.yaml lane, in yaml order. HTML and
-    # --json both render from this block (never recompute in the section fn).
-    from .explore import explore_arms
-    lane_default = {l["id"]: f"{l.get('model', '?')}@{l.get('effort', '?')}"
-                    for l in routing._load_routes()}
-    explore_entries = []
-    for lane_id, arm in explore_arms().items():
-        runner_up = f"{arm.get('model', '?')}@{arm.get('effort', '?')}"
-        lane_routes = [r for r in routes if (r.get("lane") or r.get("route_lane")) == lane_id]
-        rated = {"pass": 0, "fail": 0}
-        runner_up_rated = {"pass": 0, "fail": 0}
-        for out in outcomes:
-            if (out.get("route_lane") or "?") != lane_id:
-                continue
-            if out.get("rated") not in ("pass", "fail"):
-                continue
-            arm_label = (f"{out.get('actual_model') or '?'}@"
-                         f"{out.get('actual_effort') or '?'}")
-            if arm_label == lane_default.get(lane_id):
-                rated[out["rated"]] += 1
-            elif arm_label == runner_up:
-                runner_up_rated[out["rated"]] += 1
-        explore_entries.append({
-            "lane": lane_id,
-            "default_arm": lane_default.get(lane_id, "?"),
-            "runner_up": runner_up,
-            "routes": len(lane_routes),
-            "explored": sum(1 for r in lane_routes if r.get("explore")),
-            "default_rated": rated,
-            "runner_up_rated": runner_up_rated,
-        })
-
     return {"routes": len(routes), "_routes_raw": routes,
             "outcomes": len(outcomes_all),
             "pending": pending_rows, "outcome_rows": outcome_rows,
             "tally": tally_rows,
             "labels": labels,
-            "explore": explore_entries,
             "methods": [{"method": m, "routes": c} for m, c in sorted(methods.items())]}
 
 
@@ -455,28 +422,6 @@ def _labels_section(data: dict[str, Any]) -> str:
     return ("<h2 id='labels'>Real labeled rows per lane</h2>"
             "<table><tr><th>lane</th><th>real labeled rows</th>"
             "<th>corrections → lane</th><th></th></tr>" + rows + "</table>")
-
-
-def _explore_section(data: dict[str, Any]) -> str:
-    entries = data.get("explore") or []
-    rows = ""
-    for e in entries:
-        d = e["default_rated"]
-        r = e["runner_up_rated"]
-        rows += (f"<tr><td>{_esc(e['lane'])}</td><td>{_esc(e['default_arm'])}</td>"
-                 f"<td>{_esc(e['runner_up'])}</td><td>{e['routes']}</td>"
-                 f"<td>{e['explored']}</td>"
-                 f"<td>{d['pass']}/{d['fail']}</td>"
-                 f"<td>{r['pass']}/{r['fail']}</td></tr>")
-    note = "No explored routes yet. " if not any(e["explored"] for e in entries) else ""
-    note += ("Exploration is opt-in (EVALROUTE_EXPLORE or evalroute.explore.fraction). "
-             "These are your rows only, unpaired; ranking arms from pooled rows needs "
-             "≥20 rated outcomes per arm from ≥3 contributors and is not automated yet.")
-    return ("<h2 id='explore'>Exploration (runner-up arms)</h2>"
-            "<table><tr><th>lane</th><th>default arm</th><th>runner-up</th>"
-            "<th>routes</th><th>explored</th><th>default pass/fail</th>"
-            "<th>runner-up pass/fail</th></tr>" + rows + "</table>"
-            f"<p class='note'>{note}</p>")
 
 
 # ------------------------------------------------------------- session store
@@ -838,7 +783,6 @@ def _data_model(trains: Path | None, factory_json: str | None,
         "outcome_rows": ledger["outcome_rows"],
         "tally": ledger["tally"],
         "labels": ledger["labels"],
-        "explore": ledger["explore"],
         "methods": ledger["methods"],
         "sessions": sessions,
         "trains": trains_data,
@@ -860,7 +804,7 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
     css = _CSS.substitute(**palette, mono=_MONO)
     ledger = {"pending": data["pending"], "outcome_rows": data["outcome_rows"],
               "tally": data["tally"], "methods": data["methods"],
-              "labels": data["labels"], "explore": data["explore"]}
+              "labels": data["labels"]}
 
     header = (
         f"generated {data['generated']} | evalroute {data['evalroute_version']} | "
@@ -871,7 +815,6 @@ def _render(trains: Path | None, factory_json: str | None, command: str,
         _now_section(ledger["pending"]),
         _outcomes_section(ledger),
         _tally_section(ledger),
-        _explore_section(ledger),
         _methods_section(ledger),
         _labels_section(ledger),
         _sessions_section(data["sessions"]),

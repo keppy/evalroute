@@ -491,9 +491,8 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
     lines.append(f"basis: {lane.get('provenance', 'unknown')}")
     if lane.get("explore_default"):
         pct = round(float(lane.get("explore_fraction", 0.0)) * 100)
-        lines.append(f"explore: runner-up arm ({pct}% of routes) instead of {lane['explore_default']}"
-                     "; rate it like any other")
-        lines.append(f"explore basis: {lane.get('explore_basis', '')}")
+        lines.append(f"explore: runner-up arm ({pct}% of routes) instead of {lane['explore_default']}, "
+                     f"{lane.get('explore_basis', '')}; rate it like any other")
     lines.append(_table_line())
     if lane.get("notes"):
         lines.append(f"note: {lane['notes']}")
@@ -631,12 +630,12 @@ def evalroute_route(args: dict[str, Any], **_) -> str:
             if lane is None:
                 known = ", ".join(l["id"] for l in _load_routes())
                 return json.dumps({"error": f"unknown lane {lane_id!r}; known lanes: {known}"})
-            lane = _explore.pick(lane, no_explore=bool(args.get("no_explore")))
+            lane = _explore.pick(lane)
             route_id = _note_route(task, lane, "pinned", 1.0, replace_route_id=replace_id)
             card = route_card(lane, 1.0, [], pinned=True, route_id=route_id)
             return _tool_result(card, lane, 1.0, pinned=True, method="pinned", route_id=route_id)
         lane, conf, hits, method, facets = route_full(task)
-        lane = _explore.pick(lane, no_explore=bool(args.get("no_explore")))
+        lane = _explore.pick(lane)
         route_id = _note_route(task, lane, method, conf, facets=facets)
         return _tool_result(route_card(lane, conf, hits, method=method, facets=facets, route_id=route_id),
                             lane, conf, pinned=False, method=method, route_id=route_id)

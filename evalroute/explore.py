@@ -14,7 +14,6 @@ import importlib.resources
 import json
 import os
 import random
-import re
 from typing import Any, Optional
 
 from .paths import hermes_home
@@ -64,35 +63,23 @@ def explore_arms() -> dict[str, dict[str, Any]]:
         return {}
 
 
-_PROV_P = re.compile(r"\bp=([0-9.]+)")
-
-
-def _provenance_answered(lane: dict[str, Any]) -> bool:
-    m = _PROV_P.search(str(lane.get("provenance", "")))
-    return bool(m and float(m.group(1)) < 0.05)
-
-
 def pick(lane: dict[str, Any], no_explore: bool = False) -> dict[str, Any]:
     """Return the lane, or a copy swapped to the runner-up arm when exploring.
 
     Never mutates the cached lane from ``_load_routes()``. Conditions that
     suppress exploration: ``no_explore``, fraction 0 (the RNG is not even
-    consulted), no yaml entry for the lane id, runner-up == default arm, or a
-    provenance that already answers the arm question (``p<0.05``).
+    consulted), or no yaml entry for the lane id.
     """
-    if no_explore or explore_fraction() <= 0.0 or _rng() >= explore_fraction():
+    frac = explore_fraction()
+    if no_explore or frac <= 0.0 or _rng() >= frac:
         return lane
     arm = explore_arms().get(lane["id"])
     if not arm:
         return lane
-    if arm.get("model") == lane["model"] and arm.get("effort") == lane["effort"]:
-        return lane
-    if _provenance_answered(lane):
-        return lane
     out = dict(lane)
     out["explore_default"] = f"{lane['model']}@{lane['effort']}"
     out["explore_basis"] = str(arm.get("basis", ""))
-    out["explore_fraction"] = explore_fraction()
+    out["explore_fraction"] = frac
     out["model"] = arm["model"]
     out["effort"] = arm["effort"]
     return out

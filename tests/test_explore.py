@@ -91,25 +91,15 @@ def test_pick_no_explore_flag(tmp_path, monkeypatch):
     assert explore.pick(lane, no_explore=True) is lane
 
 
-def test_pick_provenance_answered(tmp_path, monkeypatch):
-    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
-    lane = _routine_lane()
-    lane["provenance"] = "measured 2026-09-27 p=0.010"
-    assert explore.pick(lane) is lane
-
-
 def test_end_to_end_explore(tmp_path, monkeypatch):
     monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
     monkeypatch.setattr(explore, "_rng", lambda: 0.0)
     card, lane, conf, pinned, method, route_id = routing._route_for_args(
         "--lane routine-coding fix the parser test")
     assert lane["model"] == "deepseek/deepseek-v4.1-flash"
-    assert "explore: runner-up arm (100% of routes) instead of z-ai/glm-5.3-flash@medium" in card
-    assert "explore basis:" in card
-    rows = [r for r in flywheel.read_labels() if r.get("kind") == "route"]
-    assert rows[-1]["explore"] is True
-    assert rows[-1]["model"] == "deepseek/deepseek-v4.1-flash"
-    assert rows[-1]["explore_default"] == "z-ai/glm-5.3-flash@medium"
+    assert "explore: runner-up arm (100% of routes)" in card
+    assert "z-ai/glm-5.3-flash@medium," in card
+    assert "rate it like any other" in card
 
 
 def test_end_to_end_no_explore(tmp_path, monkeypatch):
@@ -136,51 +126,6 @@ def test_non_explore_card_byte_identical(tmp_path, monkeypatch):
 # ------------------------------------------------------------------ brief 02
 
 
-def test_cli_route_no_explore_flag(tmp_path, monkeypatch, capsys):
-    from evalroute import cli as cli_mod
-    from types import SimpleNamespace
-    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
-    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
-    ns = SimpleNamespace(evalroute_action="route", task=["fix the parser test"],
-                         lane="routine-coding", replace_route_id=None, wide=False,
-                         no_explore=True, json=False)
-    assert cli_mod.evalroute_cli(ns) == 0
-    out = capsys.readouterr().out
-    assert "explore:" not in out
-    assert "z-ai/glm-5.3-flash" in out
-    rows = [r for r in flywheel.read_labels() if r.get("kind") == "route"]
-    assert "explore" not in rows[-1]
-
-
-def test_cli_route_explores_without_flag(tmp_path, monkeypatch, capsys):
-    from evalroute import cli as cli_mod
-    from types import SimpleNamespace
-    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
-    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
-    ns = SimpleNamespace(evalroute_action="route", task=["fix the parser test"],
-                         lane="routine-coding", replace_route_id=None, wide=False,
-                         no_explore=False, json=False)
-    assert cli_mod.evalroute_cli(ns) == 0
-    out = capsys.readouterr().out
-    assert "explore: runner-up arm" in out
-    assert "deepseek/deepseek-v4.1-flash" in out
-
-
-def test_dispatch_dry_run_explore_sidecar(home, tmp_path, monkeypatch, capsys):
-    from tests.test_dispatch import _dry_run_dispatch
-    monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
-    monkeypatch.setattr(explore, "_rng", lambda: 0.0)
-    rc, out, sidecar = _dry_run_dispatch(home, tmp_path, monkeypatch, capsys,
-                                                  lane="routine-coding")
-    assert rc == 0
-    assert sidecar["explore"] is True
-    assert sidecar["explore_default"] == "z-ai/glm-5.3-flash@medium"
-    assert sidecar["model"] == "deepseek/deepseek-v4.1-flash"
-    # The `explore: runner-up arm ...` stderr line after the card is not in
-    # `out` (_dry_run_dispatch returns stdout only); it is checked in the
-    # hand probe and the card path is covered by the route CLI test above.
-
-
 def test_dispatch_dry_run_override_forces_no_explore(home, tmp_path, monkeypatch, capsys):
     from tests.test_dispatch import _dry_run_dispatch
     monkeypatch.setenv("EVALROUTE_EXPLORE", "1")
@@ -190,8 +135,6 @@ def test_dispatch_dry_run_override_forces_no_explore(home, tmp_path, monkeypatch
                                                   model_override="z-ai/glm-5.3-flash",
                                                   effort_override="medium")
     assert rc == 0
-    assert sidecar["explore"] is False
-    assert sidecar["explore_default"] is None
     assert sidecar["model"] == "z-ai/glm-5.3-flash"
     rows = [r for r in flywheel.read_labels() if r.get("kind") == "route"]
     assert "explore" not in rows[-1]
@@ -291,51 +234,15 @@ def _known_models(routes_path):
     return known
 
 
-def test_ledger_data_explore_block():
+def test_report_no_explore_in_output(home):
     records = [
         {"kind": "route", "id": "r1", "lane": "routine-coding",
          "model": "z-ai/glm-5.3-flash", "effort": "medium"},
-        {"kind": "route", "id": "r2", "lane": "routine-coding",
-         "model": "deepseek/deepseek-v4.1-flash", "effort": "medium",
-         "explore": True, "explore_default": "z-ai/glm-5.3-flash@medium"},
-        {"kind": "route", "id": "r3", "lane": "routine-coding",
-         "model": "z-ai/glm-5.3-flash", "effort": "medium"},
-        {"kind": "outcome", "route_lane": "routine-coding", "consumes_id": "r1",
-         "actual_model": "z-ai/glm-5.3-flash", "actual_effort": "medium",
-         "arm_attribution": "explicit_user", "rated": "pass"},
-        {"kind": "outcome", "route_lane": "routine-coding", "consumes_id": "r2",
-         "actual_model": "deepseek/deepseek-v4.1-flash", "actual_effort": "medium",
-         "arm_attribution": "explicit_user", "rated": "fail"},
     ]
     data = report._ledger_data(records)
-    entry = next(e for e in data["explore"] if e["lane"] == "routine-coding")
-    assert entry["routes"] == 3
-    assert entry["explored"] == 1
-    assert entry["default_rated"] == {"pass": 1, "fail": 0}
-    assert entry["runner_up_rated"] == {"pass": 0, "fail": 1}
-    assert entry["runner_up"] == "deepseek/deepseek-v4.1-flash@medium"
-
-
-def test_report_html_json_agree_explore(home, monkeypatch):
-    import re as _re
-    records = [
-        {"kind": "route", "id": "r1", "lane": "routine-coding",
-         "model": "z-ai/glm-5.3-flash", "effort": "medium",
-         "explore": True, "explore_default": "z-ai/glm-5.3-flash@medium"},
-        {"kind": "route", "id": "r2", "lane": "routine-coding",
-         "model": "deepseek/deepseek-v4.1-flash", "effort": "medium"},
-    ]
-    data = report._ledger_data(records)
-    explored = next(e["explored"] for e in data["explore"]
-                    if e["lane"] == "routine-coding")
-    html = report._explore_section(data)
-    m = _re.search(
-        r"<tr><td>routine-coding</td><td>[^<]*</td><td>[^<]*</td>"
-        r"<td>(\d+)</td><td>(\d+)</td>", html)
-    assert m and int(m.group(2)) == explored
-
-
-def test_report_demo_explore_empty_state(capsys):
-    html = report._render(None, None, "evalroute report --demo", is_demo=True)
-    assert "id='explore'" in html
-    assert "No explored routes yet." in html
+    assert "explore" not in data
+    out = report._data_model(None, None)
+    assert "explore" not in out
+    html = report._render(None, None, "evalroute report")
+    assert "id='explore'" not in html
+    assert '"explore"' not in html
