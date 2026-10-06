@@ -1,0 +1,20 @@
+# Explore arms: the runner-up arm per measured lane, for the opt-in explore
+# fraction (see evalroute/explore.py). Entries exist only for lanes with a
+# measured runner-up from the Tier-A harness; priors lanes have no entry on
+# purpose (no measured runner-up exists for them).
+#
+# runner-up = the non-default arm with the highest pass rate
+# (ties -> lower all-in $/success), from examples/artifacts/tier-a-*/report.csv.
+explore_arms:
+  routine-coding:
+    model: deepseek/deepseek-v4.1-flash
+    effort: medium
+    basis: "tier-a harness 2026-09-27: runner-up by pass rate (1.00 vs 0.97), $0.000129/succ"
+  alignment-reasoning:
+    model: z-ai/glm-5.3
+    effort: high
+    basis: "tier-a harness 2026-09-27: runner-up by pass rate (1.00 vs 1.00), $0.0132/succ"
+  dl-ml-research-engineering:
+    model: moonshotai/kimi-k3
+    effort: high
+    basis: "tier-a harness 2026-09-27: runner-up by pass rate (0.90 vs 0.83), $0.0078/succ"

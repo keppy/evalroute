@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 
 from . import classify_encoder  # noqa: E402
+from . import explore as _explore
 from .paths import hermes_home
 
 logger = logging.getLogger(__name__)
@@ -488,6 +489,11 @@ def route_card(lane: dict[str, Any], conf: float, hits: list[str],
             lines.append("classification: no keyword hit - defaulted to long-doc-reading; "
                          f"pass --lane <id> to pin, or say the task in more words{abstained}")
     lines.append(f"basis: {lane.get('provenance', 'unknown')}")
+    if lane.get("explore_default"):
+        pct = round(float(lane.get("explore_fraction", 0.0)) * 100)
+        lines.append(f"explore: runner-up arm ({pct}% of routes) instead of {lane['explore_default']}"
+                     "; rate it like any other")
+        lines.append(f"explore basis: {lane.get('explore_basis', '')}")
     lines.append(_table_line())
     if lane.get("notes"):
         lines.append(f"note: {lane['notes']}")
@@ -586,6 +592,8 @@ def _tool_result(card: str, lane: dict[str, Any], conf: float, pinned: bool,
         # (examples/artifacts/tier-a-models.json base_url).
         "provider": lane.get("provider") or "nous",
         "provenance": lane.get("provenance", ""),
+        "explore": bool(lane.get("explore_default")),
+        "explore_default": lane.get("explore_default"),
         "table": _table_line(),
         # The resolved library version, so an installer can assert what is
         # actually running from PATH (a verb probe cannot tell 0.7.0 from 0.7.1).
@@ -623,10 +631,12 @@ def evalroute_route(args: dict[str, Any], **_) -> str:
             if lane is None:
                 known = ", ".join(l["id"] for l in _load_routes())
                 return json.dumps({"error": f"unknown lane {lane_id!r}; known lanes: {known}"})
+            lane = _explore.pick(lane, no_explore=bool(args.get("no_explore")))
             route_id = _note_route(task, lane, "pinned", 1.0, replace_route_id=replace_id)
             card = route_card(lane, 1.0, [], pinned=True, route_id=route_id)
             return _tool_result(card, lane, 1.0, pinned=True, method="pinned", route_id=route_id)
         lane, conf, hits, method, facets = route_full(task)
+        lane = _explore.pick(lane, no_explore=bool(args.get("no_explore")))
         route_id = _note_route(task, lane, method, conf, facets=facets)
         return _tool_result(route_card(lane, conf, hits, method=method, facets=facets, route_id=route_id),
                             lane, conf, pinned=False, method=method, route_id=route_id)
@@ -636,7 +646,7 @@ def evalroute_route(args: dict[str, Any], **_) -> str:
 
 # ---------------------------------------------------------------- slash + CLI
 
-def _route_for_args(raw_args: str, wide: bool = False) -> tuple[str, dict[str, Any], float, bool, str, str | None]:
+def _route_for_args(raw_args: str, wide: bool = False, no_explore: bool = False) -> tuple[str, dict[str, Any], float, bool, str, str | None]:
     """Shared body for /route and `hermes evalroute route`.
 
     Returns (card, lane, confidence, pinned, method, route_id) so the CLI
@@ -657,6 +667,7 @@ def _route_for_args(raw_args: str, wide: bool = False) -> tuple[str, dict[str, A
         task = " ".join(rest)
     lane = _lane_by_id(lane_id) if lane_id else None
     if lane is not None:
+        lane = _explore.pick(lane, no_explore=no_explore)
         route_id = _note_route(task, lane, "pinned", 1.0, replace_route_id=replace_id)
         return route_card(lane, 1.0, [], pinned=True, route_id=route_id, wide=wide), \
             lane, 1.0, True, "pinned", route_id
@@ -664,6 +675,7 @@ def _route_for_args(raw_args: str, wide: bool = False) -> tuple[str, dict[str, A
         known = ", ".join(l["id"] for l in _load_routes())
         raise ValueError(f"unknown lane {lane_id!r}; known lanes: {known}")
     lane_obj, conf, hits, method, facets = route_full(task)
+    lane_obj = _explore.pick(lane_obj, no_explore=no_explore)
     route_id = _note_route(task, lane_obj, method, conf, facets=facets)
     return route_card(lane_obj, conf, hits, method=method, facets=facets,
                       route_id=route_id, wide=wide), \

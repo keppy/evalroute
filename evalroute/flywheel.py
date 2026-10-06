@@ -99,6 +99,9 @@ def note_route(task: str, lane: dict[str, Any], method: str, conf: float,
     }
     if facets:
         record["facets"] = facets
+    if lane.get("explore_default"):
+        record["explore"] = True
+        record["explore_default"] = lane["explore_default"]
     _append(record)
     _MEMORY["route"] = dict(record)
     return record["id"]
