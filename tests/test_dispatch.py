@@ -89,7 +89,7 @@ def test_dispatch_spawns_stub_and_prints_three_lines(home, tmp_path, monkeypatch
 ENV_STUB = r'''
 import os, sys
 with open(os.environ["STUB_ARGV_FILE"], "a", encoding="utf-8") as f:
-    f.write(repr(sorted(k for k in os.environ if k.startswith("HERMES_YOLO") or k == "EVALROUTE_KEEP")) + "\n")
+    f.write(repr(sorted(k for k in os.environ if k.startswith("HERMES_YOLO") or k == "EVALROUTE_KEEP" or k == "EVALROUTE_EXPLORE")) + "\n")
 print("REPORT BODY")
 '''
 
@@ -111,6 +111,24 @@ def test_dispatch_child_does_not_inherit_yolo(home, tmp_path, monkeypatch, capsy
     assert rc == 0
     assert eval(seen.read_text(encoding="utf-8").strip()) == ["EVALROUTE_KEEP"]
     assert os.environ["HERMES_YOLO_MODE"] == "1"  # parent untouched
+
+def test_dispatch_child_does_not_inherit_explore(home, tmp_path, monkeypatch, capsys):
+    """Exploration is the dispatcher's choice of the worker's arm; the child
+    must not inherit EVALROUTE_EXPLORE (its own routes would explore too)."""
+    stub = tmp_path / "hermes_stub.py"
+    stub.write_text(ENV_STUB, encoding="utf-8")
+    seen = tmp_path / "env.log"
+    monkeypatch.setenv("EVALROUTE_HERMES_BIN", f"{sys.executable} {stub}")
+    monkeypatch.setenv("STUB_ARGV_FILE", str(seen))
+    monkeypatch.setenv("EVALROUTE_EXPLORE", "0")  # deterministic parent route
+    brief = _make_brief(tmp_path)
+    rc = _dispatch(dict(brief=str(brief), lane="routine-coding", indir=str(tmp_path),
+                        task=None, out=None, timeout=None, rate_on_exit=None,
+                        dry_run=False))
+    assert rc == 0
+    assert eval(seen.read_text(encoding="utf-8").strip()) == []
+    assert os.environ["EVALROUTE_EXPLORE"] == "0"  # parent untouched
+
 
 def test_dispatch_default_task_is_first_paragraph(home, tmp_path, monkeypatch, capsys):
     _make_stub(tmp_path, monkeypatch)

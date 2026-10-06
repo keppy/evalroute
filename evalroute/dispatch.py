@@ -256,9 +256,13 @@ def _child_env() -> dict[str, str]:
     must not inherit it (catalog rule 12 — a child must never be an
     approval-free agent because of how its parent was launched). The worker's
     approvals follow its own ``approvals.single_query_mode``, default deny.
+
+    ``EVALROUTE_EXPLORE`` is stripped too: exploration is the dispatcher's
+    choice of the worker's arm and must not propagate into the worker's own
+    nested routes and runs.
     """
     env = dict(os.environ)
-    for key in ("HERMES_YOLO_MODE",):
+    for key in ("HERMES_YOLO_MODE", "EVALROUTE_EXPLORE"):
         env.pop(key, None)
     return env
 
