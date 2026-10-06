@@ -8,6 +8,8 @@ import pytest
 import evalroute.routing as routing
 from evalroute import explore
 from evalroute import flywheel
+from evalroute import report
+from evalroute import routes_from_labels as rfl
 
 
 from tests.test_contribute import home  # noqa: F401  (pytest fixture import)
@@ -229,3 +231,111 @@ def test_redact_outcome_rows_carry_explore_fields(home):
         assert set(row) <= set(contribute.KEPT), set(row) - set(contribute.KEPT)
         serialised = json.dumps(row)
         assert task not in serialised and "blog post" not in serialised
+
+
+# ------------------------------------------------------------------ brief 03
+
+
+def _outcome(model, effort, rated, who="a"):
+    return {"kind": "outcome", "route_lane": "routine-coding",
+            "route_model": model, "route_effort": effort,
+            "actual_model": model, "actual_effort": effort,
+            "arm_attribution": "explicit_user", "method": "rules-strong",
+            "confidence": 1.0, "rated": rated, "week": "2026-W40",
+            "task_hash": "0" * 64, "corrected": False, "schema": 1,
+            "_contributor": who}
+
+
+def test_merge_contributed_counts_explore_arm(home, tmp_path):
+    """A contributed outcome on the routine-coding runner-up arm is not an
+    unknown_arm: explore arms are maintainer-chosen, so they count as known."""
+    routes = tmp_path / "routes.yaml"
+    routes.write_text(
+        "lanes:\n"
+        "- id: routine-coding\n"
+        "  model: z-ai/glm-5.3-flash\n"
+        "  effort: medium\n"
+        "  provenance: priors\n"
+        "  keywords: [generic]\n", encoding="utf-8")
+    runner_up = explore_arms_model("routine-coding")
+    rows = [_outcome(runner_up, "medium", "pass")]
+    # via the same known_models the merge builds: not an unknown_arm
+    stats = rfl.aggregate_contributed(rows, known_models=_known_models(routes))
+    assert stats["dropped"]["unknown_arm"] == 0
+    assert stats["lanes"]["routine-coding"]["arms"][
+        f"{runner_up}@medium"]["attempts"] == 1
+    # a made-up model is still dropped
+    made_up = [_outcome("evil/made-up-model", "max", "pass")]
+    stats2 = rfl.aggregate_contributed(made_up, known_models=_known_models(routes))
+    assert stats2["dropped"]["unknown_arm"] == 1
+    lanes, _applied = rfl.merge_contributed(routes, rows)
+    assert lanes  # sanity
+    lanes2, _ = rfl.merge_contributed(routes, made_up)
+    original = next(l for l in
+                    __import__("yaml").safe_load(routes.read_text(encoding="utf-8"))["lanes"]
+                    if l["id"] == "routine-coding")
+    assert {l["id"]: l for l in lanes2}["routine-coding"] == original
+
+
+def explore_arms_model(lane):
+    from evalroute.explore import explore_arms
+    return explore_arms()[lane]["model"]
+
+
+def _known_models(routes_path):
+    import yaml as _yaml
+    from evalroute.explore import explore_arms
+    raw = _yaml.safe_load(routes_path.read_text(encoding="utf-8")) or {}
+    known = {l.get("model") for l in raw.get("lanes", []) if l.get("model")}
+    known |= {a.get("model") for a in explore_arms().values() if a.get("model")}
+    return known
+
+
+def test_ledger_data_explore_block():
+    records = [
+        {"kind": "route", "id": "r1", "lane": "routine-coding",
+         "model": "z-ai/glm-5.3-flash", "effort": "medium"},
+        {"kind": "route", "id": "r2", "lane": "routine-coding",
+         "model": "deepseek/deepseek-v4.1-flash", "effort": "medium",
+         "explore": True, "explore_default": "z-ai/glm-5.3-flash@medium"},
+        {"kind": "route", "id": "r3", "lane": "routine-coding",
+         "model": "z-ai/glm-5.3-flash", "effort": "medium"},
+        {"kind": "outcome", "route_lane": "routine-coding", "consumes_id": "r1",
+         "actual_model": "z-ai/glm-5.3-flash", "actual_effort": "medium",
+         "arm_attribution": "explicit_user", "rated": "pass"},
+        {"kind": "outcome", "route_lane": "routine-coding", "consumes_id": "r2",
+         "actual_model": "deepseek/deepseek-v4.1-flash", "actual_effort": "medium",
+         "arm_attribution": "explicit_user", "rated": "fail"},
+    ]
+    data = report._ledger_data(records)
+    entry = next(e for e in data["explore"] if e["lane"] == "routine-coding")
+    assert entry["routes"] == 3
+    assert entry["explored"] == 1
+    assert entry["default_rated"] == {"pass": 1, "fail": 0}
+    assert entry["runner_up_rated"] == {"pass": 0, "fail": 1}
+    assert entry["runner_up"] == "deepseek/deepseek-v4.1-flash@medium"
+
+
+def test_report_html_json_agree_explore(home, monkeypatch):
+    import re as _re
+    records = [
+        {"kind": "route", "id": "r1", "lane": "routine-coding",
+         "model": "z-ai/glm-5.3-flash", "effort": "medium",
+         "explore": True, "explore_default": "z-ai/glm-5.3-flash@medium"},
+        {"kind": "route", "id": "r2", "lane": "routine-coding",
+         "model": "deepseek/deepseek-v4.1-flash", "effort": "medium"},
+    ]
+    data = report._ledger_data(records)
+    explored = next(e["explored"] for e in data["explore"]
+                    if e["lane"] == "routine-coding")
+    html = report._explore_section(data)
+    m = _re.search(
+        r"<tr><td>routine-coding</td><td>[^<]*</td><td>[^<]*</td>"
+        r"<td>(\d+)</td><td>(\d+)</td>", html)
+    assert m and int(m.group(2)) == explored
+
+
+def test_report_demo_explore_empty_state(capsys):
+    html = report._render(None, None, "evalroute report --demo", is_demo=True)
+    assert "id='explore'" in html
+    assert "No explored routes yet." in html

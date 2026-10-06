@@ -252,6 +252,11 @@ def merge_contributed(routes_path: Path, rows: list[dict[str, Any]]) -> tuple[li
     raw = yaml.safe_load(routes_path.read_text(encoding="utf-8")) or {}
     existing = {l["id"]: l for l in (raw.get("lanes") or []) if isinstance(l, dict) and l.get("id")}
     known_models = {l.get("model") for l in existing.values() if l.get("model")}
+    # Explore arms are maintainer-chosen (data/explore.yaml), not minted by the
+    # pool — contributed outcomes on a lane's runner-up arm are real evidence
+    # about a model the table already sanctions.
+    from .explore import explore_arms
+    known_models |= {a.get("model") for a in explore_arms().values() if a.get("model")}
     stats = aggregate_contributed(rows, known_models=known_models)
     date = datetime.date.today().isoformat()
     out: list[dict] = []
