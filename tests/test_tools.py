@@ -176,7 +176,7 @@ def test_classify_math_beats_prose_on_dual_signal():
 def test_tool_returns_json_with_card():
     out = json.loads(routing.evalroute_route({"task": "prove the Riemann hypothesis"}))
     assert out["lane"] == "math-first-principles"
-    assert out["model"] == "qwen/qwen3.8-max"
+    assert out["model"] == "qwen/qwen3.8-max-0902"
     assert "route:" in out["card"] and "/model" in out["card"]
     assert out["provenance"].startswith("priors")
 
@@ -275,7 +275,7 @@ def test_install_routes_merge_logic(monkeypatch, capsys):
     assert merged["z-ai/glm-5.3"] == "max"            # higher of the two lanes it serves
     assert merged["someone/other-model"] == "low"      # foreign key kept
     assert merged["moonshotai/kimi-k3"] == "medium"
-    assert merged["qwen/qwen3.8-max"] == "max"
+    assert merged["qwen/qwen3.8-max-0902"] == "max"
     out = capsys.readouterr().out
     assert "~ z-ai/glm-5.3: medium -> max" in out
     assert "= someone/other-model: low (kept" in out

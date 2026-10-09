@@ -151,14 +151,14 @@ def test_model_switch_after_route_logs_rejection(home):
     rec = json.loads(_labels_file(home).read_text().strip().splitlines()[-1])
     assert rec["kind"] == "model_switch"
     assert rec["new_model"] == "gpt-6-sol"
-    assert rec["candidate_rejection"] is True  # route said qwen/qwen3.8-max
+    assert rec["candidate_rejection"] is True  # route said qwen/qwen3.8-max-0902
     assert rec["route_association"] == "process_global_unverified"
 
 
 def test_model_switch_matching_route_is_not_rejection(home):
     lane, conf, _, method = routing.route_for("prove the theorem, derivation, lemma")
     flywheel.note_route("theorem", lane, method, conf)
-    flywheel.on_pre_command(command="model", args_raw="qwen/qwen3.8-max", session_key="s1")
+    flywheel.on_pre_command(command="model", args_raw="qwen/qwen3.8-max-0902", session_key="s1")
     rec = json.loads(_labels_file(home).read_text().strip().splitlines()[-1])
     assert rec["candidate_rejection"] is False
 

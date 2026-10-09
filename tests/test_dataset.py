@@ -259,7 +259,7 @@ def test_route_cli_json_has_table(tmp_path, capsys, monkeypatch):
 
 MATH_041 = (
     "lane: Math, first principles (math-first-principles)\n"
-    "route: qwen/qwen3.8-max @ max   <- run: /model qwen/qwen3.8-max\n"
+    "route: qwen/qwen3.8-max-0902 @ max   <- run: /model qwen/qwen3.8-max-0902\n"
     "facets: symbolic\n"
     "escalation: gpt-6-sol (when coverage gaps or the task turns out harder)\n"
     "classification: rules match (0.67) on: derivation, proof\n"
@@ -267,14 +267,14 @@ MATH_041 = (
     "note: ~27-30 pts behind closed; skip open for one-shot math except Lean-verified pipelines\n"
     "why here: correctness comes from reasoning, not from tools\n"
     "route id: abc-123 (use /rate pass|fail --route-id abc-123 if routes overlap)\n"
-    "next: /model qwen/qwen3.8-max then /reasoning max | wrong lane? /route --lane <id> <same task> "
+    "next: /model qwen/qwen3.8-max-0902 then /reasoning max | wrong lane? /route --lane <id> <same task> "
     "| when done: /rate pass|fail --note why"
 )
 
 PROSE_041 = (
     "lane: Prose (prose)\n"
     "route: moonshotai/kimi-k3 @ medium   <- run: /model moonshotai/kimi-k3\n"
-    "escalation: claude-opus-5-5 (when coverage gaps or the task turns out harder)\n"
+    "escalation: anthropic/claude-opus-5.5 (when coverage gaps or the task turns out harder)\n"
     "classification: lane pinned by caller\n"
     "basis: priors 2026-09-26 (K3 EQ-Bench creative writing #2 behind Opus 5; judged by a Claude model)\n"
     "note: untested prior; blind-test K3 vs Opus 5.5 at low-medium\n"

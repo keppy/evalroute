@@ -173,7 +173,7 @@ lanes:
   - math
   - inequality
   match_hint: correctness comes from reasoning, not from tools
-  model: qwen/qwen3.8-max
+  model: qwen/qwen3.8-max-0902
   effort: max
   escalation: gpt-6-sol
   provenance: priors 2026-09-26 (Qwen3.8-Max MathArena 56% vs GPT-6 Sol 85%, Opus
@@ -198,7 +198,7 @@ lanes:
   match_hint: human is the checker
   model: moonshotai/kimi-k3
   effort: medium
-  escalation: claude-opus-5-5
+  escalation: anthropic/claude-opus-5.5
   provenance: 'priors 2026-09-26 (K3 EQ-Bench creative writing #2 behind Opus 5; judged
     by a Claude model)'
   notes: untested prior; blind-test K3 vs Opus 5.5 at low-medium
@@ -217,7 +217,7 @@ lanes:
   - crew
   - workflow design
   match_hint: the session plans and delegates, not does
-  model: claude-opus-5-5
+  model: anthropic/claude-opus-5.5
   effort: high
   escalation: null
   provenance: priors 2026-09-26 (image 2 only; not in README priors)

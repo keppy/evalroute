@@ -435,7 +435,7 @@ _BASE = [  # (name, provider, model id, prices). medium = what Hermes sends by d
     ("glm-5.3-flash", NOUS, "z-ai/glm-5.3-flash", dict(inp=0.12, out=0.40)),
     ("glm-5.3", NOUS, "z-ai/glm-5.3", dict(inp=0.91, out=2.86)),
     ("kimi-k3", NOUS, "moonshotai/kimi-k3", dict(inp=0.88, out=10.53)),
-    ("qwen3.8-max", NOUS, "qwen/qwen3.8-max", dict(inp=2.00, out=6.00)),
+    ("qwen3.8-max", NOUS, "qwen/qwen3.8-max-0902", dict(inp=2.00, out=6.00)),
     ("gpt-6-luna", OAI, "gpt-6-luna", dict(inp=0.10, out=0.50, cached=0.01)),
     ("gpt-6-sol", OAI, "gpt-6-sol", dict(inp=2.00, out=10.00, cached=0.20)),
     ("opus-5.5", ANT, "claude-opus-5-5", dict(inp=4.00, out=20.00, cached=0.20, cache_write=5.00)),
