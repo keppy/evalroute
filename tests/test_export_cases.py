@@ -7,6 +7,7 @@ Every test points HERMES_HOME at a tmp dir so labels never touch the real
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -238,9 +239,13 @@ def test_cli_end_to_end(home, tmp_path):
     env["HERMES_HOME"] = str(home)
     env["EVALROUTE_HOME"] = str(home)
     env["PYTHONPATH"] = ""
+    # The console script installed next to this interpreter (bin/ on POSIX, Scripts\ on
+    # Windows); the old hard-coded .venv\Scripts\evalroute.exe only existed on Windows.
+    script = Path(sys.executable).parent / ("evalroute.exe" if os.name == "nt" else "evalroute")
+    cmd = [str(script)] if script.exists() else [
+        sys.executable, "-c", "import sys; from evalroute.cli import main; sys.exit(main())"]
     proc = subprocess.run(
-        [str(Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "evalroute.exe"),
-         "export-cases", "--out", str(out), "--json"],
+        cmd + ["export-cases", "--out", str(out), "--json"],
         capture_output=True, text=True, env=env,
         cwd=str(Path(__file__).resolve().parents[1]))
     assert proc.returncode == 0, proc.stderr

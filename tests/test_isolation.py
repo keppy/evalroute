@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 import json
+import os
+import types
 
 from evalroute import routing
 from evalroute import flywheel
@@ -111,7 +113,10 @@ def test_platform_default_home_matches_hermes(tmp_path, monkeypatch):
     monkeypatch.delenv("EVALROUTE_HOME", raising=False)
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.setattr(paths.Path, "home", classmethod(lambda cls: tmp_path / "userhome"))
-    monkeypatch.setattr(paths.os, "name", "nt")
+    # Patch the module's view of os, not os itself: setting the real os.name to "nt"
+    # makes pathlib build WindowsPath, which Python 3.13+ refuses on POSIX.
+    fake_os = types.SimpleNamespace(name="nt", environ=os.environ)
+    monkeypatch.setattr(paths, "os", fake_os)
     local = tmp_path / "LocalAppData"
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     # neither exists yet -> Hermes's Windows default
@@ -122,5 +127,5 @@ def test_platform_default_home_matches_hermes(tmp_path, monkeypatch):
     # the real Hermes home exists -> it wins
     (local / "hermes").mkdir(parents=True)
     assert paths.hermes_home() == local / "hermes"
-    monkeypatch.setattr(paths.os, "name", "posix")
+    fake_os.name = "posix"
     assert paths.hermes_home() == tmp_path / "userhome" / ".hermes"
