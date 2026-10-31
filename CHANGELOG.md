@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.0] - 2026-10-31
+
+Flywheel exploration (opt-in) and the route table's Nous arm ids.
+
+- **Exploration.** On a fraction of routes (default 0; `EVALROUTE_EXPLORE` or
+  `evalroute.explore.fraction`), a lane listed in the bundled `data/explore.yaml` routes
+  to its runner-up arm instead of the default, so the flywheel gathers observed evidence
+  on arms it would otherwise never try. The card names the runner-up in one line; the
+  ledger route row gets `explore`/`explore_default`; contributed rows carry both text-free;
+  pooled rows count explored models as known arms. `dispatch --model/--effort` never
+  explores, and the env is stripped from dispatched workers and the test fixture so it
+  cannot leak.
+- **Nous arm ids.** The math arm names `qwen/qwen3.8-max-0902` and the orchestration
+  model / prose escalation `anthropic/claude-opus-5.5` — the ids Nous actually serves;
+  the previous bare ids (`qwen/qwen3.8-max`, `claude-opus-5-5`) 404'd on dispatch.
+  `factory check` now guards every arm id against Hermes's cached Nous model list.
+- **Release and tests.** `publish.yml` releases through PyPI Trusted Publishing on a
+  `v*` tag (attested); tests run on macOS/Linux and Python 3.13+.
+
 ## [0.9.2] - 2026-10-05
 
 The harness is part of the arm.
